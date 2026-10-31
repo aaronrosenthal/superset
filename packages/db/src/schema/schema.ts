@@ -21,6 +21,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import { invitations, organizations, teams, users } from "./auth";
+import { channels } from "./channels";
 import type { PageReportReason } from "./enums";
 import {
 	actorKindValues,
@@ -335,6 +336,12 @@ export const taskActivity = pgTable(
 		toProjectId: uuid("to_project_id").references(() => taskProjects.id, {
 			onDelete: "set null",
 		}),
+		fromChannelId: uuid("from_channel_id").references(() => channels.id, {
+			onDelete: "set null",
+		}),
+		toChannelId: uuid("to_channel_id").references(() => channels.id, {
+			onDelete: "set null",
+		}),
 		descriptionEdited: boolean("description_edited").notNull().default(false),
 		addedLabelIds: uuid("added_label_ids").array(),
 		removedLabelIds: uuid("removed_label_ids").array(),
@@ -351,6 +358,8 @@ export const taskActivity = pgTable(
 		index("task_activity_to_assignee_id_idx").on(table.toAssigneeId),
 		index("task_activity_from_project_id_idx").on(table.fromProjectId),
 		index("task_activity_to_project_id_idx").on(table.toProjectId),
+		index("task_activity_from_channel_id_idx").on(table.fromChannelId),
+		index("task_activity_to_channel_id_idx").on(table.toChannelId),
 	],
 );
 
@@ -802,13 +811,13 @@ export const environments = pgTable(
 		sourceRef: text("source_ref").notNull(),
 		/** Where its golden lives and every box forked from it runs; a snapshot only exists in its region. */
 		region: text().notNull().default("sfo1"),
-		/** The sandbox bundle every workspace of this environment boots on; null keeps the image's own. */
-		bundleSha: text("bundle_sha"),
+		/** The sandbox bundle every workspace of this environment boots on: the newest `sandbox_bundles` row at create, moved by every release. */
+		bundleSha: text("bundle_sha").notNull(),
 		/**
-		 * Which of the environment's repositories carries the `.superset/config.json`
-		 * the box acts on; null means none does and only `hooks` applies.
+		 * The repository a workspace opens on. Its `.superset` config is the one
+		 * the box runs. Null only after the repository is removed from GitHub.
 		 */
-		hooksRepositoryId: uuid("hooks_repository_id").references(
+		primaryRepositoryId: uuid("primary_repository_id").references(
 			() => githubRepositories.id,
 			{ onDelete: "set null" },
 		),
@@ -831,9 +840,21 @@ export const environments = pgTable(
 );
 
 /**
- * The repositories an environment checks out, in order; the first is the
- * primary. An environment with none (the shared image environment) takes
- * its repositories at workspace create.
+ * Every sandbox bundle a release published, so "the current bundle" is a row
+ * and not whichever environment the release last touched. The newest is what
+ * a new environment pins to; rolling back is inserting the previous sha.
+ */
+export const sandboxBundles = pgTable("sandbox_bundles", {
+	sha: text().primaryKey(),
+	imageRef: text("image_ref").notNull(),
+	releasedAt: timestamp("released_at", { withTimezone: true })
+		.notNull()
+		.defaultNow(),
+});
+
+/**
+ * The repositories an environment checks out. Which one is primary is
+ * `environments.primary_repository_id`.
  */
 export const environmentRepositories = pgTable(
 	"environment_repositories",
@@ -854,6 +875,32 @@ export const environmentRepositories = pgTable(
 		index("environment_repositories_environment_id_idx").on(
 			table.environmentId,
 		),
+	],
+);
+
+/** Projects an environment is linked to; the new-workspace picker offers linked environments first. */
+export const environmentProjects = pgTable(
+	"environment_projects",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		organizationId: uuid("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		environmentId: uuid("environment_id")
+			.notNull()
+			.references(() => environments.id, { onDelete: "cascade" }),
+		/** A host project's key; projects live on hosts, so there is no row to reference. */
+		projectId: text("project_id").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		unique("environment_projects_environment_id_project_id_unique").on(
+			table.environmentId,
+			table.projectId,
+		),
+		index("environment_projects_project_id_idx").on(table.projectId),
 	],
 );
 
@@ -932,6 +979,8 @@ export const cloudWorkspaces = pgTable(
 		deletedAt: timestamp("deleted_at", { withTimezone: true }),
 		/** When the box stops because its organization reached its usage limit; null otherwise. */
 		usageStopAt: timestamp("usage_stop_at", { withTimezone: true }),
+		/** Null on workspaces made before sizes existed; they run large. */
+		machineSize: text("machine_size"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",
 		}),
@@ -1010,8 +1059,8 @@ export type SelectCloudWorkspaceShare =
 
 /**
  * What a cloud workspace checked out, fixed at create: each repository on a
- * branch at a path under the workspace root. The first is the primary, the
- * one the workspace opens on.
+ * branch at a path under the workspace root. The primary is the environment's
+ * `primary_repository_id`.
  */
 export const cloudWorkspaceRepositories = pgTable(
 	"cloud_workspace_repositories",
@@ -1036,26 +1085,32 @@ export const cloudWorkspaceRepositories = pgTable(
 	],
 );
 
-/** Who has opened a cloud workspace, and when they were last in it. */
-export const cloudWorkspacePresence = pgTable(
-	"cloud_workspace_presence",
+/**
+ * Plain-string tags on cloud workspaces: the sidebar's folder membership,
+ * the same model as host-service `workspace_tags`. They live here rather
+ * than in the sandbox's host.db because the sidebar files a box while it
+ * sleeps. `tag` is stored already-normalized (`@superset/shared/workspace-tags`).
+ * A tag belongs to whoever applied it, so one member's folders never appear
+ * in a teammate's sidebar.
+ */
+export const cloudWorkspaceTags = pgTable(
+	"cloud_workspace_tags",
 	{
 		cloudWorkspaceId: uuid("cloud_workspace_id")
 			.notNull()
 			.references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
-		userId: uuid("user_id")
+		tag: text().notNull(),
+		createdByUserId: uuid("created_by_user_id")
 			.notNull()
 			.references(() => users.id, { onDelete: "cascade" }),
-		firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
-			.notNull()
-			.defaultNow(),
-		lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+		createdAt: timestamp("created_at", { withTimezone: true })
 			.notNull()
 			.defaultNow(),
 	},
 	(table) => [
-		primaryKey({ columns: [table.cloudWorkspaceId, table.userId] }),
-		index("cloud_workspace_presence_user_id_idx").on(table.userId),
+		primaryKey({
+			columns: [table.cloudWorkspaceId, table.tag, table.createdByUserId],
+		}),
 	],
 );
 
@@ -1095,6 +1150,31 @@ export const cloudWorkspaceBoots = pgTable(
 			.where(
 				sql`${table.stoppedAt} is null or ${table.finalizedThrough} is null or ${table.finalizedThrough} < ${table.stoppedAt}`,
 			),
+	],
+);
+
+export const cloudWorkspacePullRequests = pgTable(
+	"cloud_workspace_pull_requests",
+	{
+		cloudWorkspaceId: uuid("cloud_workspace_id")
+			.notNull()
+			.references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+		repositoryId: uuid("repository_id")
+			.notNull()
+			.references(() => githubRepositories.id, { onDelete: "cascade" }),
+		prNumber: integer("pr_number").notNull(),
+		linkedAt: timestamp("linked_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(table) => [
+		primaryKey({
+			name: "cloud_workspace_pull_requests_pk",
+			columns: [table.cloudWorkspaceId, table.repositoryId, table.prNumber],
+		}),
+		index("cloud_workspace_pull_requests_repository_id_idx").on(
+			table.repositoryId,
+		),
 	],
 );
 
@@ -1657,6 +1737,7 @@ export const automations = pgTable(
 		continueAgentSession: boolean("continue_agent_session")
 			.notNull()
 			.default(false),
+		machineSize: text("machine_size"),
 
 		// The schedule lives in the automation's `schedule` trigger.
 		enabled: boolean().notNull().default(true),
@@ -2239,6 +2320,8 @@ export const attachmentParentKind = pgEnum("attachment_parent_kind", [
 	"task_comment",
 	// A file in a project's description; the parent id is the project's.
 	"project_description",
+	// A file sent in a channel; the parent id is the channel_messages row's.
+	"channel_message",
 ]);
 
 /**

@@ -2,18 +2,18 @@
 
 import { Trans, useLingui } from "@lingui/react/macro";
 import { COMPANY } from "@superset/shared/constants";
-import { useInView } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { FaApple, FaGithub } from "react-icons/fa";
+import { EdgeGlare } from "@/app/[lang]/components/EdgeGlare";
 import { track } from "@/lib/analytics";
+import { HEADLINE_VARIANTS, type HeadlineVariant } from "@/lib/hero-headline";
 import { DownloadButton } from "../DownloadButton";
 import { WaitlistModal } from "../WaitlistModal";
 import { BoidsBackground } from "./components/BoidsBackground";
 import { ProductDemo } from "./components/ProductDemo";
 import { RiseHeadline } from "./components/RiseHeadline";
-import { useHeadlineVariant } from "./hooks/useHeadlineVariant";
-import type { HeadlineVariant } from "./utils/subscribeToHeadlineVariant";
+import { useHeadlineExposure } from "./hooks/useHeadlineExposure";
 
 export function HeroSection() {
 	const [isWaitlistOpen, setIsWaitlistOpen] = useState(false);
@@ -28,20 +28,8 @@ export function HeroSection() {
 	}, []);
 	const { t, i18n } = useLingui();
 
-	const assignment = useHeadlineVariant();
 	const headlineRef = useRef<HTMLHeadingElement>(null);
-	const isHeadlineInView = useInView(headlineRef, { amount: 0.5 });
-
-	useEffect(() => {
-		if (!assignment || !isHeadlineInView) return;
-		const recordWhenVisible = () => {
-			if (document.visibilityState === "visible") assignment.recordExposure();
-		};
-		recordWhenVisible();
-		document.addEventListener("visibilitychange", recordWhenVisible);
-		return () =>
-			document.removeEventListener("visibilitychange", recordWhenVisible);
-	}, [assignment, isHeadlineInView]);
+	useHeadlineExposure(headlineRef);
 
 	const headlines: Record<HeadlineVariant, [lead: string, emphasis: string]> = {
 		control: [
@@ -71,7 +59,6 @@ export function HeroSection() {
 			}),
 		],
 	};
-	const [lead, emphasis] = headlines[assignment?.variant ?? "control"];
 
 	return (
 		<div>
@@ -82,17 +69,19 @@ export function HeroSection() {
 						<Link
 							href={
 								i18n.locale === "en"
-									? "/blog/a-new-name"
-									: `/${i18n.locale}/blog/a-new-name`
+									? "/blog/superset-is-now-paradev"
+									: `/${i18n.locale}/blog/superset-is-now-paradev`
 							}
-							className="group mb-6 sm:mb-8 inline-flex max-w-full items-center gap-2 rounded-[2px] border border-border bg-background/80 px-3 py-1.5 text-xs font-mono text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/[0.2]"
+							className="group relative mb-6 sm:mb-8 inline-flex max-w-full items-center gap-2 rounded-[2px] border border-border bg-background/80 px-3 py-1.5 text-xs font-mono text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/[0.2]"
 						>
 							<span
 								aria-hidden="true"
 								className="size-1.5 shrink-0 rounded-full bg-brand"
 							/>
 							<span>
-								<Trans>Superset is getting a new name soon</Trans>
+								<Trans>
+									Superset is now Paradev. Also, we raised an $11.5M seed
+								</Trans>
 							</span>
 							<span
 								aria-hidden="true"
@@ -100,23 +89,21 @@ export function HeroSection() {
 							>
 								→
 							</span>
+							<EdgeGlare className="-inset-px rounded-[inherit]" />
 						</Link>
 						<div className="space-y-4 sm:space-y-6">
 							<h1
 								ref={headlineRef}
 								className="text-[min(2.25rem,8.6vw)] sm:text-5xl md:text-6xl lg:text-7xl font-medium tracking-tight leading-[1.1] [word-spacing:0.15em] whitespace-pre-line text-foreground relative max-w-6xl mx-auto"
 							>
-								{assignment ? (
-									<RiseHeadline
-										key={assignment.variant}
-										lead={lead}
-										emphasis={emphasis}
-									/>
-								) : (
-									<span className="invisible" aria-hidden="true">
-										<RiseHeadline lead={lead} emphasis={emphasis} />
+								{HEADLINE_VARIANTS.map((variant) => (
+									<span key={variant} data-headline-variant={variant}>
+										<RiseHeadline
+											lead={headlines[variant][0]}
+											emphasis={headlines[variant][1]}
+										/>
 									</span>
-								)}
+								))}
 							</h1>
 							<p
 								id="hero-subheadline"
@@ -149,7 +136,7 @@ export function HeroSection() {
 											})
 										: track("mobile_page_clicked", { source: "hero" })
 								}
-								aria-label={t({ message: "Superset for iPhone and iPad" })}
+								aria-label={t({ message: "Paradev for iPhone and iPad" })}
 								className="flex size-11 shrink-0 items-center justify-center border border-border bg-background text-foreground transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brand sm:size-12"
 							>
 								<FaApple aria-hidden="true" className="size-5" />
