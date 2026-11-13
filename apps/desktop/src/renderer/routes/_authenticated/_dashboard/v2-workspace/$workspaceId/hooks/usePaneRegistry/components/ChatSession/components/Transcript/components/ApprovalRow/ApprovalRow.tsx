@@ -11,7 +11,11 @@ import { Badge } from "@superset/ui/badge";
 import { Button } from "@superset/ui/button";
 import { cn } from "@superset/ui/utils";
 import { ShieldQuestion, SquareTerminal } from "lucide-react";
+import { isUnrestrictedMode } from "renderer/routes/_authenticated/utils/isUnrestrictedMode";
+import { useSessionMode } from "../../providers/SessionModeProvider";
 import { ToolContentList } from "../ToolContentList";
+import { ApprovalReason } from "./components/ApprovalReason";
+import { AskerLabel } from "./components/AskerLabel";
 import { OptionButtons } from "./components/OptionButtons";
 import { QuestionForm } from "./components/QuestionForm";
 import type { ApprovalOption } from "./utils/optionRole";
@@ -50,24 +54,26 @@ function decisionLabel(
 
 export function ApprovalRow({
 	afterTarget = false,
+	asker,
 	item,
 	onRespond,
 	target,
 }: {
 	afterTarget?: boolean;
+	asker?: string | undefined;
 	item: ApprovalRequest;
 	onRespond: (approvalId: string, decision: Decision) => void;
 	target?: Item | undefined;
 }) {
-	if (item.form) {
-		return <QuestionForm form={item.form} item={item} onRespond={onRespond} />;
-	}
 	const pending = item.status === "pending";
+	const unrestricted = isUnrestrictedMode(useSessionMode());
 	const options = item.options ?? [];
 	const command =
 		target?.kind === "tool_call" && (target as ToolCall).toolKind === "execute";
 	const Icon = command ? SquareTerminal : ShieldQuestion;
-	return (
+	const card = item.form ? (
+		<QuestionForm form={item.form} item={item} onRespond={onRespond} />
+	) : (
 		<div
 			className={cn(
 				"flex flex-col gap-2.5",
@@ -128,6 +134,9 @@ export function ApprovalRow({
 				) : (
 					<p className="text-muted-foreground text-sm">{item.title}</p>
 				))}
+			{pending && (item.reason || unrestricted) && (
+				<ApprovalReason reason={item.reason} unrestricted={unrestricted} />
+			)}
 			{pending && item.detail && (
 				<ToolContentList itemId={item.id} items={item.detail} />
 			)}
@@ -158,6 +167,13 @@ export function ApprovalRow({
 						</Button>
 					</div>
 				))}
+		</div>
+	);
+	if (!asker) return card;
+	return (
+		<div className="flex flex-col gap-1">
+			<AskerLabel name={asker} />
+			{card}
 		</div>
 	);
 }

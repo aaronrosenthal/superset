@@ -9,6 +9,7 @@ import {
 	HiXMark,
 } from "react-icons/hi2";
 import { useIsV2CloudEnabled } from "renderer/hooks/useIsV2CloudEnabled";
+import { usePluginsSettingsVisible } from "renderer/hooks/usePluginsSettingsVisible";
 import { electronTrpc } from "renderer/lib/electron-trpc";
 import { AppMenuButton } from "renderer/routes/_authenticated/_dashboard/components/AppMenuButton";
 import { NavigationControls } from "renderer/routes/_authenticated/_dashboard/components/NavigationControls";
@@ -33,17 +34,16 @@ export function SettingsSidebar() {
 	const isV2CloudEnabled = useIsV2CloudEnabled();
 	const { data: platform } = electronTrpc.window.getPlatform.useQuery();
 	const isMac = platform === undefined || platform === "darwin";
-	const mobileEnabled =
-		useFeatureFlagEnabled(FEATURE_FLAGS.MOBILE_LAUNCH) === true;
 	const cloudWorkspacesEnabled =
 		useFeatureFlagEnabled(FEATURE_FLAGS.CLOUD_WORKSPACES) === true;
+	const pluginsVisible = usePluginsSettingsVisible();
 	const normalizedSearchQuery = searchQuery.trim();
 	const matchCounts = normalizedSearchQuery
 		? getVisibleMatchCountBySection(
 				normalizedSearchQuery,
 				isV2CloudEnabled,
 				cloudWorkspacesEnabled,
-				mobileEnabled,
+				pluginsVisible,
 			)
 		: null;
 

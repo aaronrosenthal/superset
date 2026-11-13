@@ -1,11 +1,9 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import { acpHarnessForPreset, presetForAnyHarness } from "@superset/chat/core";
-import { FEATURE_FLAGS } from "@superset/shared/constants";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { SquareTerminal } from "lucide-react-native";
-import { useFeatureFlag } from "posthog-react-native";
 import { useState } from "react";
 import { ActivityIndicator, Alert, ScrollView, View } from "react-native";
 import { Button } from "@/components/ui/button";
@@ -22,6 +20,7 @@ import { useNewSessionPreferencesStore } from "@/screens/(authenticated)/(home)/
 import { getHostTerminalsQueryKey } from "@/screens/(authenticated)/(home)/home/hooks/useHostTerminals";
 import { AgentMark } from "@/screens/(authenticated)/(home)/new-session/agent";
 import { ListRow } from "@/screens/(authenticated)/components/ListRow";
+import { useResolveAcpChatEnabled } from "@/screens/(authenticated)/hooks/useAcpChatEnabled";
 import {
 	agentLaunchPresetId,
 	describeAgentLaunchPreferences,
@@ -31,6 +30,8 @@ import { useHostAgentConfigs } from "@/screens/(authenticated)/hooks/useHostAgen
 import { usePendingChatLaunchStore } from "@/screens/(authenticated)/stores/pendingChatLaunchStore";
 import { hostStartsChats } from "@/screens/(authenticated)/utils/hostStartsChats";
 import { useHostCompatibility } from "../hooks/useHostCompatibility";
+import { resumeChat } from "../utils/resumeChat";
+import { openDesktopChatTab } from "./utils/openDesktopChatTab";
 
 /**
  * Bottom sheet for the tab strip's + — the host's agent presets plus a plain
@@ -44,7 +45,7 @@ export function NewSessionSheet() {
 	const router = useRouter();
 	const theme = useTheme();
 	const queryClient = useQueryClient();
-	const acpChat = Boolean(useFeatureFlag(FEATURE_FLAGS.ACP_CHAT));
+	const resolveAcpChatEnabled = useResolveAcpChatEnabled();
 	const { workspace, host, isResolving } = useWorkspaceHost(id ?? null);
 	const hostUrl = host
 		? hostServiceUrl(host.organizationId, host.machineId)
@@ -58,7 +59,7 @@ export function NewSessionSheet() {
 	const presets = presetsQuery.data ?? [];
 	const endedChatsQuery = useQuery({
 		queryKey: ["chat-v3", "ended", hostUrl, workspace?.id],
-		enabled: acpChat && !!hostUrl && !!workspace,
+		enabled: !!hostUrl && !!workspace,
 		queryFn: async () => {
 			if (!hostUrl || !workspace) return [];
 			const rows = await getChatTransport(hostUrl).listSessions({
@@ -126,7 +127,7 @@ export function NewSessionSheet() {
 	const launch = async (preset: (typeof presets)[number] | null) => {
 		if (!workspace || !hostUrl || launchingKey !== null) return;
 		setLaunchingKey(preset?.presetId ?? "shell");
-		const chatHarness = acpChat
+		const chatHarness = (await resolveAcpChatEnabled())
 			? acpHarnessForPreset(preset?.presetId)
 			: undefined;
 		try {
@@ -146,6 +147,9 @@ export function NewSessionSheet() {
 					model: model?.id,
 					surface: "chat",
 				});
+				if (result.chatSessionId) {
+					openDesktopChatTab(client, workspace.id, result.chatSessionId);
+				}
 				terminalId = result.chatSessionId ?? result.sessionId;
 			} else if (chatHarness) {
 				const { model, effort } = launchFor(preset);
@@ -160,6 +164,7 @@ export function NewSessionSheet() {
 					modelLabel: model?.label ?? null,
 					effortLabel: effort?.label ?? null,
 				});
+				openDesktopChatTab(client, workspace.id, created.sessionId);
 				terminalId = created.sessionId;
 			} else {
 				const { model, effort } = launchFor(preset);
@@ -199,23 +204,24 @@ export function NewSessionSheet() {
 		if (launchingKey !== null) return;
 		setLaunchingKey(chat.sessionId);
 		try {
-			const transport = getChatTransport(hostUrl);
-			await transport
-				.closeSession({ sessionId: chat.sessionId })
-				.catch(() => {});
-			const created = await transport.createSession({
-				commandId: randomUUID(),
+			const sessionId = await resumeChat({
+				transport: getChatTransport(hostUrl),
 				workspaceId: workspace.id,
-				harness: chat.harness,
-				resume: { harnessSessionId: chat.harnessSessionId },
+				chat: { ...chat, harnessSessionId: chat.harnessSessionId },
+				commandId: randomUUID(),
 			});
+			openDesktopChatTab(
+				getHostServiceClientByUrl(hostUrl),
+				workspace.id,
+				sessionId,
+			);
 			if (host) {
 				void queryClient.invalidateQueries({
 					queryKey: getHostTerminalsQueryKey(host.machineId),
 				});
 			}
 			router.dismissTo(
-				`/(authenticated)/workspace/${workspace.id}?tab=${created.sessionId}`,
+				`/(authenticated)/workspace/${workspace.id}?tab=${sessionId}`,
 			);
 		} catch (error) {
 			setLaunchingKey(null);

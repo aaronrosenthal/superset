@@ -1,5 +1,7 @@
 import type { UserContent } from "@superset/chat/protocol";
+import type { WorkspaceStore } from "@superset/panes";
 import type { AgentIdentityId } from "@superset/shared/agent-catalog";
+import type { StoreApi } from "zustand/vanilla";
 export interface FilePosition {
 	line: number;
 	column?: number;
@@ -45,6 +47,14 @@ export interface DevtoolsPaneData {
 
 export type DiffFocusSide = "deletions" | "additions";
 
+/** Narrows the pane to the files one chat turn changed. */
+export interface DiffPaneFilter {
+	/** Repo-relative paths; every other file is hidden. Absent, every file in `range` shows. */
+	paths?: string[];
+	/** Commits to diff instead of the workspace's scope. */
+	range?: { fromHash: string; toHash: string };
+}
+
 export interface DiffPaneData {
 	path: string;
 	changeKey?: string;
@@ -54,6 +64,7 @@ export interface DiffPaneData {
 	focusLine?: number;
 	focusSide?: DiffFocusSide;
 	focusTick?: number;
+	filter?: DiffPaneFilter;
 }
 
 export interface CommentPaneData {
@@ -77,8 +88,25 @@ export interface PagePaneData {
 	title?: string;
 }
 
+export const PENDING_CLOUD_CHAT_PANE_KIND = "pending-cloud-chat";
+
+export interface PendingCloudChatPaneData {
+	draftId: string;
+	agentId: string;
+	/** The id the box launches the agent under; the pane opens whatever starts with it. */
+	terminalId?: string;
+	/** What the user typed; shown until the box's transcript has it. */
+	launchPrompt?: string;
+	queuedPrompts?: UserContent[][];
+	chatModelId?: string;
+	chatModeId?: string;
+}
+
 export interface ChatPaneData {
 	terminalId: string;
+	/** Set on a pane opened onto a chat that is still moving to this host. */
+	awaitingMove?: boolean;
+	draftId?: string;
 	sessionId: string | null;
 	agent?: {
 		id: string;
@@ -91,10 +119,13 @@ export interface ChatPaneData {
 		mimeType: string;
 	}>;
 	queuedPrompts?: UserContent[][];
+	launchPrompt?: string;
 	chatModelId?: string;
-	chatModelLabel?: string;
+	chatEffortId?: string;
 	chatModeId?: string;
 	chatTitle?: string;
+	/** A Paradev agent's session: the pane reads it from the agent session store, not the host. */
+	agentSession?: { id: string; agentName: string };
 }
 
 export interface DesktopPaneData {
@@ -119,6 +150,13 @@ export interface ReviewPaneData {
 
 export interface PagesListPaneData {
 	kind: "pages-list";
+	page?: PagePaneData;
+}
+
+export const NEW_TAB_PANE_KIND = "new-tab";
+
+export interface NewTabPaneData {
+	kind: typeof NEW_TAB_PANE_KIND;
 }
 
 /**
@@ -135,6 +173,7 @@ export interface SubagentPaneData {
 }
 
 export type WorkspaceSearchKey =
+	| "sessionId"
 	| "terminalId"
 	| "focusRequestId"
 	| "subagentTerminalId"
@@ -153,10 +192,16 @@ export type WorkspaceSearchKey =
  */
 export type ConsumeSearch = (keys: WorkspaceSearchKey[]) => void;
 
+export interface PaneTarget {
+	store: StoreApi<WorkspaceStore<PaneViewerData>>;
+	reveal: () => void;
+}
+
 export type PaneViewerData =
 	| FilePaneData
 	| TerminalPaneData
 	| ChatPaneData
+	| PendingCloudChatPaneData
 	| BrowserPaneData
 	| DevtoolsPaneData
 	| DiffPaneData
@@ -169,4 +214,5 @@ export type PaneViewerData =
 	| ChangesListPaneData
 	| ReviewPaneData
 	| PagesListPaneData
+	| NewTabPaneData
 	| SubagentPaneData;

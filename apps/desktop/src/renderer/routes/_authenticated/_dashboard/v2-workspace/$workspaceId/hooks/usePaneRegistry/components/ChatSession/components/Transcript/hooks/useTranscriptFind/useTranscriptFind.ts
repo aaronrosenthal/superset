@@ -12,6 +12,8 @@ import {
 } from "react";
 import { useDebouncedValue } from "renderer/hooks/useDebouncedValue";
 import { useHotkey } from "renderer/hotkeys";
+import { usePaneHotkeyEnabled } from "renderer/routes/_authenticated/_dashboard/hooks/usePaneHotkeyEnabled";
+import { rowElement } from "../../utils/rowElement";
 import { toolTitleText } from "../../utils/toolTitle";
 import {
 	type FindMatch,
@@ -26,7 +28,6 @@ import {
 	paintHighlights,
 } from "../../utils/transcriptHighlights";
 import { rowMessageId, type TranscriptRow } from "../../utils/transcriptRows";
-
 import { useThrottledValue } from "./hooks/useThrottledValue";
 
 const DEBOUNCE_MS = 150;
@@ -62,6 +63,8 @@ export type TranscriptFind = {
 	isOpen: boolean;
 	loading: boolean;
 	open: () => void;
+	/** Opens the bar, or puts focus back in it with the query selected. */
+	show: () => void;
 	close: () => void;
 	query: string;
 	setQuery: (query: string) => void;
@@ -80,12 +83,6 @@ function insideForeignFindScope(event: KeyboardEvent): boolean {
 		event.target instanceof Element &&
 		event.target.closest(FOREIGN_FIND_SCOPES) !== null
 	);
-}
-
-function rowElement(viewport: HTMLElement, messageId: string): Element | null {
-	if (typeof CSS === "undefined" || typeof CSS.escape !== "function")
-		return null;
-	return viewport.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
 }
 
 function revealRect(viewport: HTMLElement, rect: DOMRect, center: boolean) {
@@ -146,13 +143,15 @@ export function useTranscriptFind({
 	);
 	const segments = useMemo(
 		() =>
-			findSegments(
-				indexed.rows,
-				indexed.snapshot,
-				indexed.snapshot.session?.harness,
-				formatToolTitle,
-			),
-		[indexed, formatToolTitle],
+			isOpen
+				? findSegments(
+						indexed.rows,
+						indexed.snapshot,
+						indexed.snapshot.session?.harness,
+						formatToolTitle,
+					)
+				: [],
+		[isOpen, indexed, formatToolTitle],
 	);
 	const settledNeedle = useDebouncedValue(findNeedle(query), debounceMs);
 	const needle = isOpen ? settledNeedle : "";
@@ -227,22 +226,21 @@ export function useTranscriptFind({
 		onClose?.();
 	}, [dismiss, onClose]);
 
-	useHotkey(
-		"FIND_IN_CHAT",
-		() => {
-			if (!isOpen) {
-				setIsOpen(true);
-				return;
-			}
-			inputRef.current?.focus();
-			inputRef.current?.select();
-		},
-		{
-			enabled: isActive,
-			preventDefault: true,
-			ignoreEventWhen: insideForeignFindScope,
-		},
-	);
+	const show = useCallback(() => {
+		if (!isOpen) {
+			setIsOpen(true);
+			return;
+		}
+		inputRef.current?.focus();
+		inputRef.current?.select();
+	}, [isOpen]);
+
+	const findEnabled = usePaneHotkeyEnabled(isActive);
+	useHotkey("FIND_IN_CHAT", show, {
+		enabled: findEnabled,
+		preventDefault: true,
+		ignoreEventWhen: insideForeignFindScope,
+	});
 
 	// Focus already belongs to the pane the reader moved to, so this close
 	// must not hand it back to this pane's composer.
@@ -339,6 +337,7 @@ export function useTranscriptFind({
 		isOpen,
 		loading: isOpen && omittedItemIds.length > 0,
 		open,
+		show,
 		close,
 		query,
 		setQuery,

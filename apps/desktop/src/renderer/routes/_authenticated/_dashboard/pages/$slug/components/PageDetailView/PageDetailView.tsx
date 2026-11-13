@@ -3,8 +3,8 @@ import { Button } from "@superset/ui/button";
 import {
 	CommentModeButton,
 	PageHeader as PageTitleBar,
-	PageViewers,
 } from "@superset/ui/page-comments";
+import { PagePresenceStack } from "@superset/ui/presence";
 import { Spinner } from "@superset/ui/spinner";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
@@ -75,7 +75,7 @@ export function PageDetailView({
 						leading={backButton}
 						trailing={
 							<>
-								<PageViewers pageId={page.id} className="mr-1" />
+								<PagePresenceStack pageId={page.id} viewerId={currentUserId} />
 								{canComment ? (
 									<CommentModeButton
 										enabled={commentsEnabled}
@@ -92,7 +92,9 @@ export function PageDetailView({
 						sharing={sharing}
 						onRename={onRename}
 						onRefresh={onRefresh}
-						onPreviewVersion={setPreviewVersion}
+						onPreviewVersion={(next) =>
+							setPreviewVersion(next === page.servedVersion ? null : next)
+						}
 						previewVersion={
 							previewVersion === page.servedVersion ? null : previewVersion
 						}
@@ -123,6 +125,7 @@ export function PageDetailView({
 					onCommentsEnabledChange={setCommentsEnabled}
 					initialThreadId={initialThreadId}
 					initialPanelOpen={initialPanelOpen}
+					findActive
 				/>
 			</div>
 		</div>

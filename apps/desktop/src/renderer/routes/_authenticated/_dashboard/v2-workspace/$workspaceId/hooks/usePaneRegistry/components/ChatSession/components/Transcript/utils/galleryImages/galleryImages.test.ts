@@ -49,6 +49,7 @@ describe("galleryImages", () => {
 				key: "tools:t1:c1",
 				groupStart: false,
 				defaultCollapsed: true,
+				steps: [],
 				items: [
 					tool("c1", [`${DIR}/two.png`]),
 					tool("c2", [`${DIR}/two.png`, `${DIR}/three.png`]),
@@ -144,6 +145,8 @@ describe("galleryImages", () => {
 				startedAtMs: 0,
 				completedAtMs: 1,
 				running: false,
+				waiting: false,
+				stopped: false,
 			},
 			userRow(
 				"u1",
@@ -154,8 +157,10 @@ describe("galleryImages", () => {
 				kind: "turn_status",
 				key: "status:t1",
 				groupStart: false,
+				turnId: "t1",
 				status: "failed",
-				message: undefined,
+				error: undefined,
+				latest: true,
 			},
 		];
 		expect(galleryImages(rows)).toEqual([]);

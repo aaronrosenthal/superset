@@ -1,16 +1,28 @@
-import type { Envelope } from "@superset/chat/protocol";
-import type { HarnessAdapter } from "../../harness";
+import { randomUUID } from "node:crypto";
+import type { ChatSelections } from "@superset/chat/core";
+import type {
+	DiscoverSessionsResult,
+	Envelope,
+	TurnError,
+} from "@superset/chat/protocol";
+import type { ChatCheckpoints, SessionCheckpoints } from "../../checkpoints";
+import type {
+	DiscoverNativeSessionsInput,
+	HarnessAdapter,
+} from "../../harness";
 import type { ChatJournal } from "../../journal";
+import { HOST_STOPPED } from "../../journal";
+import type { UnfinishedSession } from "../liveSession";
 import { LiveSession } from "../liveSession";
 
-export type HarnessFactoryOptions = {
+export type HarnessFactoryOptions = ChatSelections & {
 	sessionId: string;
 	scopeId: string;
 	harness: string;
+	/** The host agent config the harness launches with. */
+	agentConfigId?: string;
 	cwd: string;
-	modeId?: string;
-	modelId?: string;
-	resume?: { harnessSessionId: string };
+	resume?: { harnessSessionId: string; quiet?: boolean };
 	terminalId?: string;
 };
 
@@ -29,9 +41,40 @@ export type LiveSessionRegistryOptions = {
 	publish: (envelope: Envelope) => void;
 	harnesses: HarnessRegistry;
 	observer?: LiveSessionObserver;
+	checkpoints?: ChatCheckpoints;
 	mintId?: () => string;
 	now?: () => number;
+	usageLimitGraceMs?: number;
 };
+
+function warnOnFailure(work: Promise<unknown>): void {
+	work.catch((error: unknown) =>
+		console.warn("[chat-runtime] checkpoint failed", error),
+	);
+}
+
+function sessionCheckpoints(
+	checkpoints: ChatCheckpoints,
+	cwd: string,
+	sessionId: string,
+): SessionCheckpoints {
+	return {
+		capture: () => checkpoints.capture({ cwd, sessionId }),
+		turnStarted: (turnId, before) =>
+			warnOnFailure(
+				checkpoints.turnStarted({ cwd, sessionId, turnId, before }),
+			),
+		turnSettled: (turnId, anchor) =>
+			warnOnFailure(
+				checkpoints.turnSettled({
+					cwd,
+					sessionId,
+					turnId,
+					...(anchor ? { anchor } : {}),
+				}),
+			),
+	};
+}
 
 export class LiveSessionRegistry {
 	private readonly live = new Map<string, LiveSession>();
@@ -40,6 +83,57 @@ export class LiveSessionRegistry {
 
 	supports(harness: string): boolean {
 		return this.options.harnesses.has(harness);
+	}
+
+	/**
+	 * Lists native harness history. Reuses a live adapter for the same harness
+	 * and workspace when one is up; otherwise builds a temporary adapter from
+	 * the registry factory and disposes it. Does not open a journal session.
+	 */
+	async discoverSessions(input: {
+		harness: string;
+		scopeId: string;
+		cwd: string;
+		agentConfigId?: string;
+		cursor?: string;
+	}): Promise<DiscoverSessionsResult> {
+		const query: DiscoverNativeSessionsInput = {
+			cwd: input.cwd,
+			...(input.cursor ? { cursor: input.cursor } : {}),
+		};
+		const reusable = [...this.live.values()].find(
+			(session) =>
+				session.harness === input.harness &&
+				session.scopeId === input.scopeId &&
+				session.agentConfigId === input.agentConfigId &&
+				session.state.status !== "dead" &&
+				session.supportsNativeDiscovery(),
+		);
+		if (reusable) return reusable.discoverSessions(query);
+
+		const factory = this.options.harnesses.get(input.harness);
+		if (!factory) throw new Error(`unknown harness ${input.harness}`);
+		const adapter = factory({
+			sessionId: `discover-${randomUUID()}`,
+			scopeId: input.scopeId,
+			harness: input.harness,
+			...(input.agentConfigId ? { agentConfigId: input.agentConfigId } : {}),
+			cwd: input.cwd,
+		});
+		let failure: unknown;
+		try {
+			if (!adapter.discoverSessions) {
+				return { supported: false, sessions: [] };
+			}
+			return await adapter.discoverSessions(query);
+		} catch (error) {
+			failure = error;
+			throw error;
+		} finally {
+			await adapter.dispose().catch((disposeError: unknown) => {
+				if (!failure) throw disposeError;
+			});
+		}
 	}
 
 	create(options: HarnessFactoryOptions): LiveSession {
@@ -53,7 +147,11 @@ export class LiveSessionRegistry {
 		const session = new LiveSession({
 			sessionId: options.sessionId,
 			scopeId: options.scopeId,
+			cwd: options.cwd,
 			harness: options.harness,
+			...(options.agentConfigId
+				? { agentConfigId: options.agentConfigId }
+				: {}),
 			terminalId: options.terminalId,
 			journal: this.options.journal,
 			publish: (envelope) => {
@@ -61,8 +159,18 @@ export class LiveSessionRegistry {
 				this.observe(() => observer?.published(envelope, session));
 			},
 			adapter: factory(options),
+			...(this.options.checkpoints
+				? {
+						checkpoints: sessionCheckpoints(
+							this.options.checkpoints,
+							options.cwd,
+							options.sessionId,
+						),
+					}
+				: {}),
 			mintId: this.options.mintId,
 			now: this.options.now,
+			usageLimitGraceMs: this.options.usageLimitGraceMs,
 		});
 		this.live.set(options.sessionId, session);
 		this.observe(() => observer?.started(options));
@@ -71,6 +179,8 @@ export class LiveSessionRegistry {
 				cwd: options.cwd,
 				modeId: options.modeId,
 				modelId: options.modelId,
+				effortId: options.effortId,
+				...(options.fast ? { fast: options.fast } : {}),
 				resume: options.resume,
 			});
 		} catch (error) {
@@ -90,6 +200,23 @@ export class LiveSessionRegistry {
 		}
 	}
 
+	/** Whether any chat working in `cwd` has a turn running or about to. */
+	busyIn(cwd: string): boolean {
+		for (const session of this.live.values()) {
+			if (session.cwd === cwd && session.busy) return true;
+		}
+		return false;
+	}
+
+	/** The newest live session bound to a terminal: where a reopened pane's chat lives now. */
+	forTerminal(terminalId: string): LiveSession | null {
+		let found: LiveSession | null = null;
+		for (const session of this.live.values()) {
+			if (session.terminalId === terminalId) found = session;
+		}
+		return found;
+	}
+
 	get(sessionId: string): LiveSession | null {
 		return this.live.get(sessionId) ?? null;
 	}
@@ -100,6 +227,13 @@ export class LiveSessionRegistry {
 		return session;
 	}
 
+	unfinished(): UnfinishedSession[] {
+		return [...this.live.values()].flatMap((session) => {
+			const unfinished = session.unfinished();
+			return unfinished ? [unfinished] : [];
+		});
+	}
+
 	async dispose(sessionId: string): Promise<void> {
 		const session = this.live.get(sessionId);
 		if (!session) return;
@@ -108,8 +242,9 @@ export class LiveSessionRegistry {
 		await session.dispose();
 	}
 
+	/** The host is going away, so every running turn ends without the user asking. */
 	async disposeAll(): Promise<void> {
-		await this.disposeWhere(() => true);
+		await this.disposeWhere(() => true, HOST_STOPPED);
 	}
 
 	async disposeScope(scopeId: string): Promise<string[]> {
@@ -118,6 +253,7 @@ export class LiveSessionRegistry {
 
 	private async disposeWhere(
 		matches: (session: LiveSession) => boolean,
+		error?: TurnError,
 	): Promise<string[]> {
 		const sessions = [...this.live.values()].filter(matches);
 		for (const session of sessions) this.live.delete(session.sessionId);
@@ -125,7 +261,7 @@ export class LiveSessionRegistry {
 			this.observe(() => this.options.observer?.stopped(session.sessionId));
 		}
 		const results = await Promise.allSettled(
-			sessions.map((session) => session.dispose()),
+			sessions.map((session) => session.dispose(error)),
 		);
 		const failure = results.find((result) => result.status === "rejected");
 		if (failure?.status === "rejected") throw failure.reason;

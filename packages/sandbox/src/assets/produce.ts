@@ -343,6 +343,8 @@ function hostService(): void {
 			"mkdir -p /rt && cd /rt && cp -R /out/stage/dist/. /rt/ && cp -R /out/stage/drizzle /rt/drizzle && cp -R /out/stage/agent-templates /rt/agent-templates && cp /out/stage/RUNTIME /rt/RUNTIME",
 			// host-service resolves the daemon side by side with itself, the way the desktop ships it.
 			"cp /out/stage/pty-daemon/pty-daemon.js /rt/pty-daemon.js",
+			// The natives below build against this node, so the runtime carries it: an environment's setup may replace the box's node.
+			"cp /usr/local/bin/node /rt/node",
 			"cd /rt && npm init -y >/dev/null && npm pkg set type=module >/dev/null",
 			`npm install ${[...natives, ...acpAdapters.map(pinned)].join(" ")} @parcel/watcher @xterm/headless --no-audit --no-fund >/dev/null`,
 			// The adapters bring their own claude and codex binaries (~650 MB); host-service points them at the box's pinned CLIs instead.
@@ -499,6 +501,40 @@ async function codex(version?: string): Promise<void> {
 	});
 }
 
+/** pdev's linux-x64 package (binary, runtime, native addons); defaults to the latest release. */
+async function pdev(version?: string): Promise<void> {
+	const tag = version ? `tags/v${version}` : "latest";
+	const release = JSON.parse(
+		await fetchText(
+			`https://api.github.com/repos/paradevai/pdev/releases/${tag}`,
+		),
+	) as {
+		tag_name: string;
+		assets: { name: string; digest: string; browser_download_url: string }[];
+	};
+	const pinned = release.tag_name.replace(/^v/, "");
+	const asset = release.assets.find(
+		(a) => a.name === `pdev-${pinned}-linux-x64.tar.gz`,
+	);
+	if (!asset) throw new Error(`pdev ${pinned}: no linux-x64 package`);
+	const { sha256: hash } = cache(
+		await fetchBytes(asset.browser_download_url),
+		".tar.gz",
+	);
+	if (`sha256:${hash}` !== asset.digest)
+		throw new Error(`pdev ${pinned}: sha256 ${hash}, release ${asset.digest}`);
+	rewriteRows({
+		pdev: {
+			sha256: hash,
+			suffix: ".tar.gz",
+			dest: `${SANDBOX_PATHS.media}/pdev-${pinned}.tar.gz`,
+			mode: "0644",
+			source: asset.browser_download_url,
+			version: pinned,
+		},
+	});
+}
+
 export const producers: Record<
 	string,
 	(version?: string) => Promise<void> | void
@@ -512,6 +548,7 @@ export const producers: Record<
 	cli,
 	claude,
 	codex,
+	pdev,
 };
 
 if (import.meta.main) {

@@ -7,10 +7,11 @@ interface Settings {
 	diffStyle: "split" | "unified";
 	showDiffComments: boolean;
 	expandUnchanged: boolean;
-	/** How the top-bar Changes button (and ⌘⇧L) opens the Changes surface:
+	/** How the top-bar Changes button (and ⌘⇧G) opens the Changes surface:
 	 * split the current tab, or focus/create a dedicated tab. */
 	changesOpenTarget: ChangesOpenTarget;
 	dictationEnabled: boolean;
+	showParadevAnywhereButton: boolean;
 }
 
 interface SettingsStore extends Settings {
@@ -25,6 +26,7 @@ export const useSettings = create<SettingsStore>()(
 			expandUnchanged: false,
 			changesOpenTarget: "pane",
 			dictationEnabled: true,
+			showParadevAnywhereButton: true,
 			update: (key, value) => set({ [key]: value }),
 		}),
 		{ name: "settings" },

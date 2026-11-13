@@ -11,6 +11,11 @@ export const AIR_CLIENT_META = {
 	},
 };
 
+/** Asks session/fork to keep the conversation only up to and including `messageId`. */
+export function airForkPointMeta(messageId: string) {
+	return { jetbrains: { air: { fork: { version: 1, messageId } } } };
+}
+
 export const AIR_ASYNC_TASK_STOP_METHOD = "_session/async_task/stop";
 
 export const airAsyncTaskSpawnedSchema = z.looseObject({
@@ -60,6 +65,28 @@ const subagentControlMetaSchema = z.looseObject({
 	}),
 });
 
+const compactionMetaSchema = z.looseObject({
+	_meta: z.looseObject({
+		jetbrains: z
+			.looseObject({
+				air: z.looseObject({ contextCompaction: z.unknown() }).optional(),
+			})
+			.optional(),
+		claudeCode: z.looseObject({ toolName: z.string().optional() }).optional(),
+	}),
+});
+
+/** claude-agent-acp's synthetic "Compact conversation" tool call. */
+export function isCompactionCall(raw: unknown): boolean {
+	const parsed = compactionMetaSchema.safeParse(raw);
+	if (!parsed.success) return false;
+	const { jetbrains, claudeCode } = parsed.data._meta;
+	return (
+		jetbrains?.air?.contextCompaction !== undefined ||
+		claudeCode?.toolName === "compact"
+	);
+}
+
 export function isSubagentControlCall(raw: unknown): boolean {
 	const parsed = subagentControlMetaSchema.safeParse(raw);
 	if (!parsed.success) return false;
@@ -68,4 +95,25 @@ export function isSubagentControlCall(raw: unknown): boolean {
 		jetbrains?.air?.subagent === true ||
 		SUBAGENT_CONTROL_TOOLS.has(claudeCode?.toolName ?? "")
 	);
+}
+
+const permissionMetaSchema = z.looseObject({
+	_meta: z.looseObject({
+		jetbrains: z.looseObject({
+			air: z.looseObject({
+				permission: z.looseObject({
+					description: z.string().nullable().optional(),
+				}),
+			}),
+		}),
+	}),
+});
+
+// claude-agent-acp calls this field temporary diagnostic text: an adapter bump may change or drop it.
+export function airPermissionReason(raw: unknown): string | undefined {
+	const parsed = permissionMetaSchema.safeParse(raw);
+	if (!parsed.success) return undefined;
+	const description =
+		parsed.data._meta.jetbrains.air.permission.description?.trim();
+	return description?.replace(/^Reason:\s*/, "") || undefined;
 }

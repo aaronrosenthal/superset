@@ -1,9 +1,20 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { appendPastedText } from "@superset/chat/core";
 import type { UserMessage } from "@superset/chat/protocol";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { ChatPaneActionsProvider } from "../../../../providers/ChatPaneActionsProvider";
 import { copySourceText } from "../../utils/copySourceText";
 import { UserMessageRow } from "./UserMessageRow";
+
+function legacyPastedMessage(
+	prompt: string,
+	pastes: readonly string[],
+): string {
+	const blocks = pastes.map(
+		(paste) =>
+			`<pasted_text lines="${paste.split("\n").length}">\n${paste}\n</pasted_text>`,
+	);
+	return [prompt, ...blocks].filter(Boolean).join("\n\n");
+}
 
 const TYPED = "Why does the usage notice crash here?";
 const LOG = [
@@ -51,7 +62,7 @@ function renderRow(text: string) {
 }
 
 test("a sent paste shows as a card beside the typed text, not in the bubble", () => {
-	const view = renderRow(appendPastedText(TYPED, [LOG]));
+	const view = renderRow(legacyPastedMessage(TYPED, [LOG]));
 
 	expect(view.getByText(TYPED)).toBeTruthy();
 	expect(
@@ -65,7 +76,7 @@ test("a sent paste shows as a card beside the typed text, not in the bubble", ()
 });
 
 test("Show text opens the paste read-only and Hide text folds it", () => {
-	const view = renderRow(appendPastedText(TYPED, [LOG]));
+	const view = renderRow(legacyPastedMessage(TYPED, [LOG]));
 	fireEvent.click(view.getByRole("button", { name: "Show text" }));
 
 	const pre = view.container.querySelector("pre");
@@ -81,7 +92,7 @@ test("Show text opens the paste read-only and Hide text folds it", () => {
 });
 
 test("Copy message gives the typed text and the paste, without the markup", async () => {
-	const view = renderRow(appendPastedText(TYPED, [LOG, "second\npaste"]));
+	const view = renderRow(legacyPastedMessage(TYPED, [LOG, "second\npaste"]));
 	fireEvent.click(view.getByRole("button", { name: "Copy message" }));
 
 	await waitFor(() => expect(writeText).toHaveBeenCalled());
@@ -91,7 +102,7 @@ test("Copy message gives the typed text and the paste, without the markup", asyn
 });
 
 test("a selection across the card copies the paste it stands for", () => {
-	const view = renderRow(appendPastedText(TYPED, [LOG]));
+	const view = renderRow(legacyPastedMessage(TYPED, [LOG]));
 	const transcript = view.getByTestId("transcript");
 	const setData = mock((_type: string, _text: string) => {});
 
@@ -106,10 +117,32 @@ test("a selection across the card copies the paste it stands for", () => {
 });
 
 test("a message that is only a paste has no empty bubble", () => {
-	const view = renderRow(appendPastedText("", [LOG]));
+	const view = renderRow(legacyPastedMessage("", [LOG]));
 
 	expect(
 		view.container.querySelectorAll("[data-pasted-text-card]"),
 	).toHaveLength(1);
 	expect(view.container.querySelector(".whitespace-pre-wrap")).toBeNull();
+});
+
+test("editing a message sends the new text in place of the old one", () => {
+	const editMessage = mock((_itemId: string, _text: string) => {});
+	const view = render(
+		<ChatPaneActionsProvider
+			editMessage={editMessage}
+			editableMessageIds={new Set(["user-1"])}
+		>
+			<UserMessageRow harness={undefined} item={message(TYPED)} />
+		</ChatPaneActionsProvider>,
+	);
+	fireEvent.click(view.getByRole("button", { name: "Edit message" }));
+	const box = view.getByRole("textbox");
+	fireEvent.change(box, { target: { value: "Why does it crash on reset?" } });
+	fireEvent.keyDown(box, { key: "Enter" });
+
+	expect(editMessage).toHaveBeenCalledWith(
+		"user-1",
+		"Why does it crash on reset?",
+	);
+	expect(view.queryByRole("textbox")).toBeNull();
 });

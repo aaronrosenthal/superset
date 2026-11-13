@@ -41,9 +41,11 @@ export const SETTING_ITEM_ID = {
 	BEHAVIOR_FILE_OPEN_MODE: "behavior-file-open-mode",
 	BEHAVIOR_FILE_AUTO_SAVE: "behavior-file-auto-save",
 	BEHAVIOR_AGENT_SESSION_PLACEMENT: "behavior-agent-session-placement",
+	BEHAVIOR_ACP_CHAT: "behavior-acp-chat",
 	BEHAVIOR_CHANGES_OPEN_TARGET: "behavior-changes-open-target",
 	BEHAVIOR_RESOURCE_MONITOR: "behavior-resource-monitor",
 	BEHAVIOR_DICTATION: "behavior-dictation",
+	BEHAVIOR_PARADEV_ANYWHERE: "behavior-paradev-anywhere",
 	USAGE_IN_SIDEBAR: "usage-in-sidebar",
 	BEHAVIOR_OPEN_LINKS_IN_APP: "behavior-open-links-in-app",
 	BEHAVIOR_STAR_GITHUB: "behavior-star-github",
@@ -65,6 +67,7 @@ export const SETTING_ITEM_ID = {
 	TERMINAL_LINK_BEHAVIOR: "terminal-link-behavior",
 	TERMINAL_BACKGROUND_LIMIT: "terminal-background-limit",
 	TERMINAL_COPY_ON_SELECT: "terminal-copy-on-select",
+	TERMINAL_CLOSE_CONFIRM: "terminal-close-confirm",
 
 	LINKS_FILE: "links-file",
 	LINKS_FOLDER: "links-folder",
@@ -76,9 +79,10 @@ export const SETTING_ITEM_ID = {
 	EXPERIMENTAL_V1_MIGRATION: "experimental-v1-migration",
 	EXPERIMENTAL_INLINE_WORKSPACE_PORTS: "experimental-inline-workspace-ports",
 	EXPERIMENTAL_WORKSPACE_AGENTS: "experimental-workspace-agents",
-	EXPERIMENTAL_NEW_SIDEBAR: "experimental-new-sidebar",
+	EXPERIMENTAL_CHAT_TURN_SNAPSHOTS: "experimental-chat-turn-snapshots",
 	EXPERIMENTAL_WAIT_FOR_SETUP_BEFORE_AGENT:
 		"experimental-wait-for-setup-before-agent",
+	EXPERIMENTAL_RESTART_ONBOARDING: "experimental-restart-onboarding",
 
 	BILLING_OVERVIEW: "billing-overview",
 	BILLING_PLANS: "billing-plans",
@@ -91,6 +95,9 @@ export const SETTING_ITEM_ID = {
 	PROJECT_WORKTREE_LOCATION: "project-worktree-location",
 	PROJECT_SPARSE_CHECKOUT: "project-sparse-checkout",
 	PROJECT_IMPORT_WORKTREES: "project-import-worktrees",
+
+	ORGANIZATION_PLUGIN_SOURCES: "organization-plugin-sources",
+	ORGANIZATION_PLUGIN_ACCESS: "organization-plugin-access",
 
 	API_KEYS_LIST: "api-keys-list",
 	API_KEYS_GENERATE: "api-keys-generate",
@@ -105,6 +112,7 @@ export const SETTING_ITEM_ID = {
 		"security-expose-host-service-via-relay",
 
 	HOST_MEMBERS: "host-members",
+	HOST_ALLOW_CLOUD_WORKSPACES: "host-allow-cloud-workspaces",
 	ENVIRONMENTS_LIST: "environments-list",
 	AGENT_ACCOUNTS: "agent-accounts",
 	CONNECTIONS: "connections",
@@ -193,11 +201,13 @@ export const SETTING_ITEM_VARIANT: Record<SettingItemId, SettingVariant> = {
 	[SETTING_ITEM_ID.BEHAVIOR_FILE_OPEN_MODE]: "v1",
 	[SETTING_ITEM_ID.BEHAVIOR_FILE_AUTO_SAVE]: "v2",
 	[SETTING_ITEM_ID.BEHAVIOR_AGENT_SESSION_PLACEMENT]: "v2",
+	[SETTING_ITEM_ID.BEHAVIOR_ACP_CHAT]: "v2",
 	// The top-bar Changes control is a v2-only surface.
 	[SETTING_ITEM_ID.BEHAVIOR_CHANGES_OPEN_TARGET]: "v2",
 	[SETTING_ITEM_ID.BEHAVIOR_RESOURCE_MONITOR]: "shared",
 	// The agent composers that offer dictation are v2-only.
 	[SETTING_ITEM_ID.BEHAVIOR_DICTATION]: "v2",
+	[SETTING_ITEM_ID.BEHAVIOR_PARADEV_ANYWHERE]: "v2",
 	// The home sidebar (DashboardSidebar) only renders for v2 users.
 	[SETTING_ITEM_ID.USAGE_IN_SIDEBAR]: "v2",
 	[SETTING_ITEM_ID.BEHAVIOR_OPEN_LINKS_IN_APP]: "v1",
@@ -222,6 +232,7 @@ export const SETTING_ITEM_VARIANT: Record<SettingItemId, SettingVariant> = {
 	[SETTING_ITEM_ID.TERMINAL_LINK_BEHAVIOR]: "v1",
 	[SETTING_ITEM_ID.TERMINAL_BACKGROUND_LIMIT]: "v2",
 	[SETTING_ITEM_ID.TERMINAL_COPY_ON_SELECT]: "v2",
+	[SETTING_ITEM_ID.TERMINAL_CLOSE_CONFIRM]: "v2",
 
 	[SETTING_ITEM_ID.LINKS_FILE]: "v2",
 	[SETTING_ITEM_ID.LINKS_FOLDER]: "v2",
@@ -233,9 +244,10 @@ export const SETTING_ITEM_VARIANT: Record<SettingItemId, SettingVariant> = {
 	[SETTING_ITEM_ID.EXPERIMENTAL_V1_MIGRATION]: "v2",
 	[SETTING_ITEM_ID.EXPERIMENTAL_INLINE_WORKSPACE_PORTS]: "v2",
 	[SETTING_ITEM_ID.EXPERIMENTAL_WORKSPACE_AGENTS]: "v2",
-	[SETTING_ITEM_ID.EXPERIMENTAL_NEW_SIDEBAR]: "v2",
+	[SETTING_ITEM_ID.EXPERIMENTAL_CHAT_TURN_SNAPSHOTS]: "v2",
 	// Gates both the v1 renderer launch and the v2 host-side launch.
 	[SETTING_ITEM_ID.EXPERIMENTAL_WAIT_FOR_SETUP_BEFORE_AGENT]: "shared",
+	[SETTING_ITEM_ID.EXPERIMENTAL_RESTART_ONBOARDING]: "shared",
 
 	[SETTING_ITEM_ID.BILLING_OVERVIEW]: "shared",
 	[SETTING_ITEM_ID.BILLING_PLANS]: "shared",
@@ -248,6 +260,9 @@ export const SETTING_ITEM_VARIANT: Record<SettingItemId, SettingVariant> = {
 	[SETTING_ITEM_ID.PROJECT_WORKTREE_LOCATION]: "shared",
 	[SETTING_ITEM_ID.PROJECT_SPARSE_CHECKOUT]: "v2",
 	[SETTING_ITEM_ID.PROJECT_IMPORT_WORKTREES]: "v1",
+
+	[SETTING_ITEM_ID.ORGANIZATION_PLUGIN_SOURCES]: "shared",
+	[SETTING_ITEM_ID.ORGANIZATION_PLUGIN_ACCESS]: "shared",
 
 	[SETTING_ITEM_ID.API_KEYS_LIST]: "shared",
 	[SETTING_ITEM_ID.API_KEYS_GENERATE]: "shared",
@@ -262,6 +277,7 @@ export const SETTING_ITEM_VARIANT: Record<SettingItemId, SettingVariant> = {
 	[SETTING_ITEM_ID.MOBILE_APP]: "shared",
 
 	[SETTING_ITEM_ID.HOST_MEMBERS]: "shared",
+	[SETTING_ITEM_ID.HOST_ALLOW_CLOUD_WORKSPACES]: "shared",
 	[SETTING_ITEM_ID.ENVIRONMENTS_LIST]: "v2",
 	[SETTING_ITEM_ID.AGENT_ACCOUNTS]: "v2",
 	[SETTING_ITEM_ID.CONNECTIONS]: "v2",
@@ -347,7 +363,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		id: SETTING_ITEM_ID.MOBILE_APP,
 		section: "mobile",
 		title: "Mobile",
-		description: "Use Superset on your iPhone",
+		description: "Use Paradev on your iPhone",
 		keywords: ["phone", "mobile", "qr", "scan", "ios", "app store"],
 	},
 	{
@@ -463,7 +479,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		id: SETTING_ITEM_ID.ORGANIZATION_TASK_TRACKER,
 		section: "organization",
 		title: "Track tasks in",
-		description: "Use Superset tasks or your Linear issues",
+		description: "Use Paradev tasks or your Linear issues",
 		keywords: [
 			"organization",
 			"tasks",
@@ -878,6 +894,30 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		],
 	},
 	{
+		id: SETTING_ITEM_ID.BEHAVIOR_ACP_CHAT,
+		section: "behavior",
+		title: "Open agents in chat",
+		description:
+			"New agent sessions start in chat instead of the terminal. You can switch any session from its menu.",
+		keywords: [
+			"chat",
+			"interface",
+			"default",
+			"terminal",
+			"open",
+			"acp",
+			"agent",
+			"claude",
+			"codex",
+			"opencode",
+			"pi",
+			"session",
+			"pane",
+			"toggle",
+			"switch",
+		],
+	},
+	{
 		id: SETTING_ITEM_ID.BEHAVIOR_CHANGES_OPEN_TARGET,
 		section: "behavior",
 		title: "Changes open target",
@@ -919,7 +959,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		section: "behavior",
 		title: "Dictation",
 		description:
-			"Show a microphone in the chat composer. Speech is transcribed by ChatGPT when Codex is signed in to it, otherwise on your Mac when possible, and otherwise by Superset's servers.",
+			"Show a microphone in the chat composer. Speech is transcribed by ChatGPT when Codex is signed in to it, otherwise on your Mac when possible, and otherwise by Paradev's servers.",
 		keywords: [
 			"dictation",
 			"dictate",
@@ -930,6 +970,25 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 			"transcribe",
 			"chat",
 			"composer",
+		],
+	},
+	{
+		id: SETTING_ITEM_ID.BEHAVIOR_PARADEV_ANYWHERE,
+		section: "behavior",
+		title: "Use Paradev anywhere button",
+		description:
+			"Show the sidebar button that links to Mobile, Cloud, the CLI and Self-hosted",
+		keywords: [
+			"use paradev anywhere",
+			"sidebar",
+			"button",
+			"hide",
+			"show",
+			"mobile",
+			"cloud",
+			"cli",
+			"self-hosted",
+			"devices",
 		],
 	},
 	{
@@ -986,7 +1045,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 	{
 		id: SETTING_ITEM_ID.BEHAVIOR_STAR_GITHUB,
 		section: "behavior",
-		title: "Star Superset on GitHub",
+		title: "Star Paradev on GitHub",
 		description: "Support the project with a GitHub star",
 		keywords: [
 			"star",
@@ -1226,6 +1285,27 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		],
 	},
 	{
+		id: SETTING_ITEM_ID.TERMINAL_CLOSE_CONFIRM,
+		section: "terminal",
+		title: "Warn before closing a running terminal",
+		description: "Ask before closing a terminal or port with a running process",
+		keywords: [
+			"terminal",
+			"close",
+			"delete",
+			"tab",
+			"pane",
+			"port",
+			"warn",
+			"warning",
+			"confirm",
+			"prompt",
+			"running",
+			"process",
+			"ask",
+		],
+	},
+	{
 		id: SETTING_ITEM_ID.TERMINAL_LINK_BEHAVIOR,
 		section: "terminal",
 		title: "Link Behavior",
@@ -1458,19 +1538,22 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		],
 	},
 	{
-		id: SETTING_ITEM_ID.EXPERIMENTAL_NEW_SIDEBAR,
+		id: SETTING_ITEM_ID.EXPERIMENTAL_CHAT_TURN_SNAPSHOTS,
 		section: "experimental",
-		title: "New sidebar",
+		title: "Track file changes per turn",
 		description:
-			"Cloud workspaces under their projects, a local and cloud filter, and the redesigned workspace row",
+			"Snapshot the worktree before and after each chat turn, so its card lists every changed file, shell edits included, and can undo them",
 		keywords: [
 			"experimental",
-			"sidebar",
-			"cloud",
-			"workspaces",
-			"projects",
-			"filter",
-			"redesign",
+			"chat",
+			"turn",
+			"snapshot",
+			"checkpoint",
+			"changes",
+			"files",
+			"edited",
+			"undo",
+			"diff",
 			"toggle",
 			"switch",
 		],
@@ -1495,6 +1578,23 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 			"reuse",
 			"sequential",
 			"install",
+		],
+	},
+	{
+		id: SETTING_ITEM_ID.EXPERIMENTAL_RESTART_ONBOARDING,
+		section: "experimental",
+		title: "Restart onboarding",
+		description:
+			"Go through the first-run steps again. Your projects and settings stay as they are.",
+		keywords: [
+			"experimental",
+			"onboarding",
+			"restart",
+			"first run",
+			"setup",
+			"welcome",
+			"terminal",
+			"chat",
 		],
 	},
 	...INTEGRATION_SEARCH_ITEMS,
@@ -1650,7 +1750,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		id: SETTING_ITEM_ID.PROJECT_IMPORT_WORKTREES,
 		section: "project",
 		title: "Import Worktrees",
-		description: "Import existing worktrees from disk into Superset",
+		description: "Import existing worktrees from disk into Paradev",
 		keywords: [
 			"project",
 			"import",
@@ -1662,6 +1762,36 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 			"existing",
 			"disk",
 			"add",
+		],
+	},
+	{
+		id: SETTING_ITEM_ID.ORGANIZATION_PLUGIN_SOURCES,
+		section: "plugins",
+		title: "Plugin Sources",
+		description: "GitHub repositories your organization's plugins sync from",
+		keywords: [
+			"plugins",
+			"marketplace",
+			"repository",
+			"github",
+			"source",
+			"sync",
+			"organization",
+		],
+	},
+	{
+		id: SETTING_ITEM_ID.ORGANIZATION_PLUGIN_ACCESS,
+		section: "plugins",
+		title: "Organization Plugins",
+		description: "Choose which roles can install each organization plugin",
+		keywords: [
+			"plugins",
+			"roles",
+			"access",
+			"policy",
+			"install",
+			"members",
+			"admins",
 		],
 	},
 	{
@@ -1791,7 +1921,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 		section: "security",
 		title: "Allow remote access to this device via relay",
 		description:
-			"Controls whether other devices can reach your local host service through the Superset relay",
+			"Controls whether other devices can reach your local host service through the Paradev relay",
 		keywords: [
 			"security",
 			"relay",
@@ -1808,6 +1938,27 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
 			"host service",
 			"tunnel",
 			"attack surface",
+		],
+	},
+	{
+		id: SETTING_ITEM_ID.HOST_ALLOW_CLOUD_WORKSPACES,
+		section: "hosts",
+		title: "Allow my cloud workspaces to reach this host",
+		description:
+			"Lets agents in your cloud workspaces call a host you own through the relay",
+		keywords: [
+			"security",
+			"cloud",
+			"cloud workspace",
+			"sandbox",
+			"relay",
+			"remote",
+			"--host",
+			"agent",
+			"host",
+			"hosts",
+			"access",
+			"owner",
 		],
 	},
 	{
@@ -2072,12 +2223,12 @@ export function getVisibleMatchCountBySection(
 	query: string,
 	isV2: boolean,
 	cloudWorkspaces: boolean,
-	mobileEnabled = false,
+	pluginsVisible = false,
 ): Partial<Record<SettingsSection, number>> {
 	const matches = searchSettings(query).filter(
 		(item) =>
 			isItemOffered(item, isV2, cloudWorkspaces) &&
-			(item.section !== "mobile" || mobileEnabled),
+			(item.section !== "plugins" || pluginsVisible),
 	);
 	const counts: Partial<Record<SettingsSection, number>> = {};
 	for (const item of matches) {

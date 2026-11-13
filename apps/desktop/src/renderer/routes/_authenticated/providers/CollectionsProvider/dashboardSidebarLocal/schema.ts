@@ -210,6 +210,7 @@ export const workspaceLocalStateSchema = z.object({
 	paneLayout: paneWorkspaceStateSchema,
 	rightPaneLayout: paneWorkspaceStateSchema.optional(),
 	rightSidebarOpen: z.boolean().optional(),
+	// TODO(2027-01-31): delete with useRestoreExpandedPaneArea / restoreExpandedPaneArea once builds that wrote it are gone.
 	rightPaneAreaExpansion: z
 		.object({
 			movedTabIds: z.array(z.string()),
@@ -515,6 +516,8 @@ export const v2UserPreferencesSchema = z.object({
 	rightSidebarTab: z.enum(["changes", "files"]).default("changes"),
 	rightSidebarWidth: z.number().default(340),
 	rightPaneAreaWidth: z.number().optional(),
+	changesFileListWidth: z.number().optional(),
+	changesFileListOpen: z.boolean().default(true),
 	deleteLocalBranch: z.boolean().default(false),
 	showPresetsBar: z.boolean().default(true),
 	changesViewMode: changesViewModeSchema.default("folders"),
@@ -558,6 +561,7 @@ export const DEFAULT_V2_USER_PREFERENCES: V2UserPreferencesRow = {
 	rightSidebarOpen: true,
 	rightSidebarTab: "changes",
 	rightSidebarWidth: 340,
+	changesFileListOpen: true,
 	deleteLocalBranch: false,
 	showPresetsBar: true,
 	changesViewMode: "folders",

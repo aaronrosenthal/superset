@@ -10,6 +10,7 @@ import { alert } from "@superset/ui/atoms/Alert";
 import { toast } from "@superset/ui/sonner";
 import { cn } from "@superset/ui/utils";
 import { workspaceTrpc } from "@superset/workspace-client";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	Circle,
 	Files,
@@ -21,19 +22,25 @@ import {
 	Globe,
 	MessageSquare,
 	Monitor,
+	Plus,
 	Smartphone,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
 	LuArrowDownToLine,
 	LuBot,
 	LuClipboard,
 	LuClipboardCopy,
+	LuCopy,
 	LuEraser,
 	LuExternalLink,
 	LuLink,
 	LuPower,
 } from "react-icons/lu";
+import {
+	getTerminalAgentBindingsQueryKey,
+	type TerminalAgentBinding,
+} from "renderer/hooks/host-service/useTerminalAgentBindings";
 import { useWorkspaceHostTarget } from "renderer/hooks/host-service/useWorkspaceHostUrl";
 import { useHotkeyDisplay } from "renderer/hotkeys";
 import { FileIcon } from "renderer/lib/fileIcons";
@@ -50,6 +57,7 @@ import { useWorkspace } from "renderer/routes/_authenticated/_dashboard/v2-works
 import { useCollections } from "renderer/routes/_authenticated/providers/CollectionsProvider";
 import { getV2NotificationSourcesForPane } from "renderer/stores/v2-notifications";
 import type { StoreApi } from "zustand/vanilla";
+import { RightPaneNewTab } from "../../components/RightPaneNewTab";
 import { V2NotificationStatusIndicator } from "../../components/V2NotificationStatusIndicator";
 import {
 	getDocument,
@@ -61,45 +69,55 @@ import {
 	type CommentPaneData,
 	type DevtoolsPaneData,
 	type FilePaneData,
+	NEW_TAB_PANE_KIND,
 	type PagePaneData,
+	type PagesListPaneData,
 	type PaneViewerData,
+	PENDING_CLOUD_CHAT_PANE_KIND,
+	type PendingCloudChatPaneData,
 	type PullRequestPaneData,
 	SUBAGENT_PANE_KIND,
 	type SubagentPaneData,
 	type TerminalPaneData,
 } from "../../types";
+import { ignoreChatTerminal } from "../../utils/closedChatSessions";
 import {
 	findTerminalPaneLocation,
 	focusOrAddTerminalPane,
+	focusTerminalPane,
 } from "../../utils/focusTerminalPane";
 import { openPagePaneInStore } from "../../utils/openPagePaneInStore";
-import { openSubagentPaneInStore } from "../../utils/openSubagentPaneInStore";
+import { openPullRequestPaneInStore } from "../../utils/openPullRequestPaneInStore";
+import { replaceNewTabPane } from "../../utils/replaceNewTabPane";
 import { useAgentSessionLauncher } from "../useAgentSessionLauncher";
 import type { OpenReviewDiff } from "../useReviewCommentNavigation";
 import type { TerminalLauncher } from "../useV2TerminalLauncher";
-import { AccountUsage } from "./components/AccountUsage";
-import {
-	AgentSurfaceToggle,
-	AgentTerminalPane,
-	useAgentSurfaceSwitch,
-} from "./components/AgentTerminalPane";
+import { AgentTerminalPane } from "./components/AgentTerminalPane";
 import { BrowserPane, BrowserPaneToolbar } from "./components/BrowserPane";
 import { ChangesListPane } from "./components/ChangesListPane";
 import { ChatPane } from "./components/ChatPane";
+import { ChatPaneTitle } from "./components/ChatPaneTitle";
 import { CommentPane } from "./components/CommentPane";
 import { CommentPaneHeaderExtras } from "./components/CommentPane/components/CommentPaneHeaderExtras";
 import { CommentPaneTitle } from "./components/CommentPane/components/CommentPaneTitle";
 import { DesktopPane } from "./components/DesktopPane";
 import { DiffPane } from "./components/DiffPane";
-import { DiffPaneHeaderExtras } from "./components/DiffPane/components/DiffPaneHeaderExtras";
+import { DiffPaneHeaderSlot } from "./components/DiffPane/components/DiffPaneHeaderSlot";
+import {
+	diffPaneActionsSlotId,
+	diffPaneTitleSlotId,
+} from "./components/DiffPane/utils/headerSlots";
 import { FilePane } from "./components/FilePane";
 import { FilePaneHeaderExtras } from "./components/FilePane/components/FilePaneHeaderExtras";
 import { FilesTreePane } from "./components/FilesTreePane";
+import { FileViewLayout } from "./components/FileViewLayout";
 import { MobilePane } from "./components/MobilePane";
 import { PagePane } from "./components/PagePane";
 import { PagePaneHeaderExtras } from "./components/PagePaneHeaderExtras";
 import { PagePaneTitle } from "./components/PagePaneTitle";
 import { PagesListPane } from "./components/PagesListPane";
+import { PagesListPaneTitle } from "./components/PagesListPaneTitle";
+import { PendingCloudChatPane } from "./components/PendingCloudChatPane";
 import { PullRequestPane } from "./components/PullRequestPane";
 import { PullRequestPaneHeaderExtras } from "./components/PullRequestPane/components/PullRequestPaneHeaderExtras";
 import { ReviewPane } from "./components/ReviewPane";
@@ -108,10 +126,13 @@ import { TerminalPaneHeaderExtras } from "./components/TerminalPane/components/T
 import { TerminalPaneIcon } from "./components/TerminalPane/components/TerminalPaneIcon";
 import { TerminalSessionDropdown } from "./components/TerminalPane/components/TerminalSessionDropdown";
 import { terminalContextMenuLinkStore } from "./components/TerminalPane/contextMenuLinkStore";
+import { useSurfaceFork } from "./hooks/useSurfaceFork";
 import { useUndoableChatClose } from "./hooks/useUndoableChatClose";
 import { openInActions } from "./utils/openInActions";
 import { pagePaneLabel } from "./utils/pagePaneLabel";
+import { pagesListPageUiId } from "./utils/pagesListPageUiId";
 import { replaceEndedTerminal } from "./utils/replaceEndedTerminal";
+import { waitForWorkspace } from "./utils/waitForWorkspace";
 
 function getFileName(filePath: string): string {
 	return getBaseName(filePath);
@@ -121,11 +142,13 @@ function FilePaneTabTitle({
 	filePath,
 	isActive,
 	pinned,
+	showDirty,
 	workspaceId,
 }: {
 	filePath: string;
 	isActive: boolean;
 	pinned: boolean;
+	showDirty: boolean;
 	workspaceId: string;
 }) {
 	const document = useSharedFileDocument({
@@ -145,7 +168,7 @@ function FilePaneTabTitle({
 			<span className={cn("min-w-0 truncate", !pinned && "italic")}>
 				{name}
 			</span>
-			{document.dirty && (
+			{showDirty && document.dirty && (
 				<Circle className="size-2 shrink-0 fill-current text-muted-foreground" />
 			)}
 		</div>
@@ -163,7 +186,10 @@ interface UsePaneRegistryOptions {
 	launcher: TerminalLauncher;
 	store: StoreApi<WorkspaceStore<PaneViewerData>>;
 	linkedStores?: StoreApi<WorkspaceStore<PaneViewerData>>[];
+	onOpenSubagent: (data: SubagentPaneData) => void;
 	onSearch?: () => void;
+	/** File views in this store show the file tree and breadcrumb. */
+	rightStore?: StoreApi<WorkspaceStore<PaneViewerData>>;
 }
 
 export function usePaneRegistry({
@@ -173,16 +199,17 @@ export function usePaneRegistry({
 	launcher,
 	store,
 	linkedStores,
+	onOpenSubagent,
 	onSearch,
+	rightStore,
 }: UsePaneRegistryOptions): PaneRegistry<PaneViewerData> {
 	const { t } = useLingui();
 	const { workspace } = useWorkspace();
 	const workspaceId = workspace.id;
-	const agentSurface = useAgentSurfaceSwitch(workspaceId);
 	const closeChatWithUndo = useUndoableChatClose({
 		workspaceId,
 		store,
-		stopChat: agentSurface.stopChat,
+		linkedStores,
 	});
 	const host = useWorkspaceHostTarget(workspaceId);
 	const desktopUrl =
@@ -191,6 +218,7 @@ export function usePaneRegistry({
 	const clearShortcut = useHotkeyDisplay("CLEAR_TERMINAL").text;
 	const scrollToBottomShortcut = useHotkeyDisplay("SCROLL_TO_BOTTOM").text;
 	const workspaceTrpcUtils = workspaceTrpc.useUtils();
+	const queryClient = useQueryClient();
 	const { mutate: killTerminalSession, isPending: isKillingTerminalSession } =
 		workspaceTrpc.terminal.killSession.useMutation({
 			onSuccess: () => {
@@ -244,763 +272,916 @@ export function usePaneRegistry({
 	const { createNewAgentSession, focusAgentTerminal } = useAgentSessionLauncher(
 		{ workspaceId, store },
 	);
+	const forkIntoOtherSurface = useSurfaceFork(
+		workspaceId,
+		createNewAgentSession,
+	);
+
+	const startNewShell = useCallback(
+		async (ctx: RendererContext<PaneViewerData>) => {
+			const { terminalId } = ctx.pane.data as TerminalPaneData;
+			await replaceEndedTerminal({
+				store: ctx.store,
+				paneId: ctx.pane.id,
+				terminalId,
+				create: () => launcher.create(),
+				dispose: (id) =>
+					workspaceTrpcUtils.client.terminal.killSession.mutate({
+						terminalId: id,
+						workspaceId,
+					}),
+				prepare: () =>
+					terminalRuntimeRegistry.prepareReplacement(
+						terminalId,
+						ctx.pane.id,
+						t({ message: "New shell" }),
+					),
+			});
+			const stillShown = [store, ...(linkedStores ?? [])].some((candidate) =>
+				findTerminalPaneLocation(candidate.getState(), terminalId),
+			);
+			if (!stillShown) terminalRuntimeRegistry.dispose(terminalId);
+		},
+		[launcher, workspaceTrpcUtils, workspaceId, t, store, linkedStores],
+	);
+
+	const chatPaneIcon = useCallback(
+		({ agent, terminalId }: ChatPaneData) => (
+			<TerminalPaneIcon
+				agentId={agent?.id}
+				workspaceId={workspaceId}
+				terminalId={terminalId}
+			/>
+		),
+		[workspaceId],
+	);
 
 	return useMemo<PaneRegistry<PaneViewerData>>(
-		() => ({
-			file: {
-				getIcon: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as FilePaneData;
-					const name = getFileName(data.filePath);
-					return <FileIcon fileName={name} className="size-4" />;
-				},
-				getTitle: (pane) => getFileName((pane.data as FilePaneData).filePath),
-				renderTitle: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as FilePaneData;
-					return (
-						<FilePaneTabTitle
-							filePath={data.filePath}
-							isActive={ctx.isActive}
-							pinned={Boolean(ctx.pane.pinned)}
-							workspaceId={workspaceId}
-						/>
-					);
-				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<FilePane context={ctx} workspaceId={workspaceId} />
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
-					<FilePaneHeaderExtras context={ctx} workspaceId={workspaceId} />
-				),
-				onHeaderClick: (ctx: RendererContext<PaneViewerData>) =>
-					ctx.actions.pin(),
-				onBeforeClose: (pane) => {
-					const data = pane.data as FilePaneData;
-					const doc = getDocument(workspaceId, data.filePath);
-					if (!doc?.dirty) return true;
-					const name = getFileName(data.filePath);
-					return new Promise<boolean>((resolve) => {
-						alert({
-							onDismiss: () => resolve(false),
-							title: t({
-								message: `Do you want to save the changes you made to ${name}?`,
-							}),
-							description: t({
-								message: "Your changes will be lost if you don't save them.",
-							}),
-							actions: [
-								{
-									label: t({
-										message: "Save",
-									}),
-									onClick: async () => {
-										const doc = getDocument(workspaceId, data.filePath);
-										if (!doc) {
-											resolve(true);
-											return;
-										}
-										const result = await doc.save();
-										if (result.status !== "saved") {
-											const target = store.getState().getPane(pane.id);
-											if (target)
-												store.getState().setActivePane({
-													tabId: target.tabId,
-													paneId: pane.id,
-												});
-										}
-										// Only proceed to close if the save succeeded; otherwise
-										// leave the pane open so the user can see the conflict /
-										// error state and retry.
-										resolve(result.status === "saved");
-									},
-								},
-								{
-									label: t({
-										message: "Don't Save",
-									}),
-									variant: "secondary",
-									onClick: async () => {
-										const doc = getDocument(workspaceId, data.filePath);
-										if (doc) await doc.reload();
-										resolve(true);
-									},
-								},
-								{
-									label: t({
-										message: "Cancel",
-									}),
-									variant: "ghost",
-									onClick: () => resolve(false),
-								},
-							],
-						});
-					});
-				},
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close File",
-									}),
-								}
-							: d,
-					),
-			},
-			diff: {
-				getIcon: () => <GitCompareArrows className="size-3.5" />,
-				getTitle: () => t({ message: "Changes" }),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<DiffPane
-						context={ctx}
-						workspaceId={workspaceId}
-						onOpenFile={onOpenFile}
-						onCreateNewAgentSession={createNewAgentSession}
-					/>
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
-					<DiffPaneHeaderExtras workspaceId={workspaceId} store={ctx.store} />
-				),
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Diff",
-									}),
-								}
-							: d,
-					),
-			},
-			terminal: {
-				getIcon: (ctx) => {
-					const { terminalId } = ctx.pane.data as TerminalPaneData;
-					return (
-						<TerminalPaneIcon
-							workspaceId={workspaceId}
-							terminalId={terminalId}
-						/>
-					);
-				},
-				getTitle: () =>
-					t({
-						message: "Terminal",
-					}),
-				titleSource: (pane) => {
-					const { terminalId } = pane.data as TerminalPaneData;
-					const instanceId = pane.id;
-					return {
-						subscribe: (callback) =>
-							terminalRuntimeRegistry.onTitleChange(
-								terminalId,
-								callback,
-								instanceId,
-							),
-						getSnapshot: () =>
-							terminalRuntimeRegistry
-								.getTitle(terminalId, instanceId)
-								?.trim() || undefined,
-					};
-				},
-				onBeforeClose: (pane) => {
-					const { terminalId } = pane.data as TerminalPaneData;
-					return confirmCloseTerminals(
-						[terminalId],
-						(id) => probeTerminalRunning(workspaceTrpcUtils, workspaceId, id),
-						{
-							title: t({
-								message: "A process is still running in this terminal",
-							}),
-							description: t({
-								message: "Closing this terminal will end the running process.",
-							}),
-							confirmLabel: t({
-								message: "Close terminal",
-							}),
-						},
-					);
-				},
-				onAfterClose: (pane, closedPanes) => {
-					const { terminalId } = pane.data as TerminalPaneData;
-					if ((pane.data as { agentSurface?: string }).agentSurface === "acp") {
-						return;
-					}
-					const firstClosed = closedPanes.find(
-						(candidate) =>
-							candidate.kind === "terminal" &&
-							(candidate.data as TerminalPaneData).terminalId === terminalId,
-					);
-					if (firstClosed?.id !== pane.id) return;
-					if (
-						[store, ...(linkedStores ?? [])].some((candidate) =>
-							findTerminalPaneLocation(candidate.getState(), terminalId),
-						)
-					) {
-						terminalRuntimeRegistry.release(terminalId, pane.id);
-						return;
-					}
-					if (consumeTerminalBackgroundIntent(terminalId)) {
-						terminalRuntimeRegistry.release(terminalId);
-						return;
-					}
-					clearWorkspaceRunTerminal(terminalId);
-					terminalRuntimeRegistry.dispose(terminalId);
-					killTerminalSessionSilently({ terminalId, workspaceId });
-				},
-				onAfterRemove: (pane) => {
-					terminalRuntimeRegistry.release(
-						(pane.data as TerminalPaneData).terminalId,
-						pane.id,
-					);
-				},
-				renderTitle: (ctx: RendererContext<PaneViewerData>) => (
-					<div className="flex min-w-0 flex-1 items-center gap-1.5">
-						<TerminalSessionDropdown
-							onSessionRemoved={clearWorkspaceRunTerminal}
+		() =>
+			waitForWorkspace({
+				file: {
+					getIcon: (ctx: RendererContext<PaneViewerData>) => {
+						const data = ctx.pane.data as FilePaneData;
+						const name = getFileName(data.filePath);
+						return <FileIcon fileName={name} className="size-4" />;
+					},
+					getTitle: (pane) => getFileName((pane.data as FilePaneData).filePath),
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => {
+						const data = ctx.pane.data as FilePaneData;
+						return (
+							<FilePaneTabTitle
+								filePath={data.filePath}
+								isActive={ctx.isActive}
+								pinned={Boolean(ctx.pane.pinned)}
+								showDirty={ctx.store !== rightStore}
+								workspaceId={workspaceId}
+							/>
+						);
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => {
+						const inRightPane = ctx.store === rightStore;
+						return (
+							<FileViewLayout
+								context={ctx}
+								workspaceId={workspaceId}
+								showTree={inRightPane}
+								onSearch={onSearch}
+							>
+								<FilePane
+									context={ctx}
+									workspaceId={workspaceId}
+									inRightPane={inRightPane}
+								/>
+							</FileViewLayout>
+						);
+					},
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
+						<FilePaneHeaderExtras
 							context={ctx}
-							launcher={launcher}
 							workspaceId={workspaceId}
+							inRightPane={ctx.store === rightStore}
 						/>
-						<V2NotificationStatusIndicator
-							sources={getV2NotificationSourcesForPane(ctx.pane)}
-						/>
-					</div>
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as TerminalPaneData;
-					const { terminalId } = data;
-					return (
-						<div className="flex items-center gap-1">
-							<TerminalPaneHeaderExtras
-								workspaceId={workspaceId}
-								terminalId={terminalId}
-								terminalInstanceId={ctx.pane.id}
-								onNewShell={() =>
-									replaceEndedTerminal({
-										store: ctx.store,
-										paneId: ctx.pane.id,
-										terminalId,
-										create: () => launcher.create(),
-										dispose: (id) =>
-											workspaceTrpcUtils.client.terminal.killSession.mutate({
-												terminalId: id,
-												workspaceId,
-											}),
-										prepare: () =>
-											terminalRuntimeRegistry.prepareReplacement(
-												terminalId,
-												ctx.pane.id,
-												t({ message: "New shell" }),
-											),
-									})
-								}
-								onCreateNewAgentSession={createNewAgentSession}
-								onOpenSubagent={(subagent) =>
-									openSubagentPaneInStore(ctx.store, subagent)
-								}
-							/>
-							<AgentSurfaceToggle
-								pane={{ kind: "terminal", data }}
-								onChange={(surface, agent) =>
-									void agentSurface.switchSurface(ctx, surface, agent)
-								}
-								workspaceId={workspaceId}
-							/>
-						</div>
-					);
-				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<AgentTerminalPane
-						ctx={ctx}
-						onOpenFile={onOpenFile}
-						onRevealPath={onRevealPath}
-						workspaceId={workspaceId}
-					/>
-				),
-				contextMenuActions: (_ctx, defaults) => {
-					const terminalActions: ContextMenuActionConfig<PaneViewerData>[] = [
-						{
-							key: "copy",
-							label: t({ message: "Copy" }),
-							icon: <LuClipboardCopy />,
-							shortcut: `${MOD_KEY}C`,
-							disabled: (ctx) => {
-								const { terminalId } = ctx.pane.data as TerminalPaneData;
-								return !terminalRuntimeRegistry.getSelection(
-									terminalId,
-									ctx.pane.id,
-								);
-							},
-							onSelect: (ctx) => {
-								const { terminalId } = ctx.pane.data as TerminalPaneData;
-								const text = terminalRuntimeRegistry.getSelection(
-									terminalId,
-									ctx.pane.id,
-								);
-								if (text) {
-									void writeTerminalClipboard(text).catch((error: unknown) => {
-										console.error("[terminal] Failed to copy selection", error);
-									});
-								}
-							},
-						},
-						{
-							key: "paste",
-							label: t({
-								message: "Paste",
-							}),
-							icon: <LuClipboard />,
-							shortcut: `${MOD_KEY}V`,
-							onSelect: async (ctx) => {
-								const { terminalId } = ctx.pane.data as TerminalPaneData;
-								try {
-									const text = await navigator.clipboard.readText();
-									if (text) {
-										terminalRuntimeRegistry.paste(
-											terminalId,
-											text,
-											ctx.pane.id,
-										);
-									}
-								} catch {
-									// Clipboard access denied
-								}
-							},
-						},
-						{ key: "sep-terminal-clipboard", type: "separator" },
-						{
-							key: "clear-terminal",
-							label: t({
-								message: "Clear Terminal",
-							}),
-							icon: <LuEraser />,
-							shortcut:
-								clearShortcut !== "Unassigned" ? clearShortcut : undefined,
-							onSelect: (ctx) => {
-								const { terminalId } = ctx.pane.data as TerminalPaneData;
-								terminalRuntimeRegistry.clear(terminalId, ctx.pane.id);
-							},
-						},
-						{
-							key: "scroll-to-bottom",
-							label: t({
-								message: "Scroll to Bottom",
-							}),
-							icon: <LuArrowDownToLine />,
-							shortcut:
-								scrollToBottomShortcut !== "Unassigned"
-									? scrollToBottomShortcut
-									: undefined,
-							onSelect: (ctx) => {
-								const { terminalId } = ctx.pane.data as TerminalPaneData;
-								terminalRuntimeRegistry.scrollToBottom(terminalId, ctx.pane.id);
-							},
-						},
-						{ key: "sep-terminal-defaults", type: "separator" },
-					];
-
-					// Only present when the right-click landed on a link. "Open in"
-					// covers what "Split with New Browser" did for a URL, so the terminal
-					// menu drops that default rather than offering both.
-					const linkAt = (ctx: RendererContext<PaneViewerData>) =>
-						terminalContextMenuLinkStore.get(ctx.pane.id)?.link ?? null;
-					// A URL, or a file/folder the host resolved. A file link that never
-					// resolved has nowhere to open and nothing to copy, so the section
-					// stays hidden rather than showing an empty submenu.
-					const copyableLinkText = (
-						ctx: RendererContext<PaneViewerData>,
-					): string | null => {
-						const link = linkAt(ctx);
-						if (!link) return null;
-						return link.kind === "url" ? link.url : (link.resolvedPath ?? null);
-					};
-					const copyLinkText = (ctx: RendererContext<PaneViewerData>) => {
-						const text = copyableLinkText(ctx);
-						if (!text) return;
-						navigator.clipboard.writeText(text).catch(() => {
-							toast.error(t({ message: "Copy failed" }));
+					),
+					onHeaderClick: (ctx: RendererContext<PaneViewerData>) =>
+						ctx.actions.pin(),
+					onBeforeClose: (pane) => {
+						const data = pane.data as FilePaneData;
+						const doc = getDocument(workspaceId, data.filePath);
+						if (!doc?.dirty) return true;
+						const name = getFileName(data.filePath);
+						return new Promise<boolean>((resolve) => {
+							alert({
+								onDismiss: () => resolve(false),
+								title: t({
+									message: `Do you want to save the changes you made to ${name}?`,
+								}),
+								description: t({
+									message: "Your changes will be lost if you don't save them.",
+								}),
+								actions: [
+									{
+										label: t({
+											message: "Save",
+										}),
+										onClick: async () => {
+											const doc = getDocument(workspaceId, data.filePath);
+											if (!doc) {
+												resolve(true);
+												return;
+											}
+											const result = await doc.save();
+											if (result.status !== "saved") {
+												const target = store.getState().getPane(pane.id);
+												if (target)
+													store.getState().setActivePane({
+														tabId: target.tabId,
+														paneId: pane.id,
+													});
+											}
+											// Only proceed to close if the save succeeded; otherwise
+											// leave the pane open so the user can see the conflict /
+											// error state and retry.
+											resolve(result.status === "saved");
+										},
+									},
+									{
+										label: t({
+											message: "Don't Save",
+										}),
+										variant: "secondary",
+										onClick: async () => {
+											const doc = getDocument(workspaceId, data.filePath);
+											if (doc) await doc.reload();
+											resolve(true);
+										},
+									},
+									{
+										label: t({
+											message: "Cancel",
+										}),
+										variant: "ghost",
+										onClick: () => resolve(false),
+									},
+								],
+							});
 						});
-					};
-					const linkActions: ContextMenuActionConfig<PaneViewerData>[] = [
-						{
-							key: "open-link-in",
-							label: t({ message: "Open in" }),
-							icon: <LuExternalLink />,
-							hidden: (ctx) => !copyableLinkText(ctx),
-							children: openInActions,
-						},
-						{
-							key: "copy-link",
-							label: t({ message: "Copy Link" }),
-							icon: <LuLink />,
-							hidden: (ctx) => linkAt(ctx)?.kind !== "url",
-							onSelect: copyLinkText,
-						},
-						{
-							key: "copy-path",
-							label: t({ message: "Copy Path" }),
-							icon: <LuLink />,
-							hidden: (ctx) => {
-								const link = linkAt(ctx);
-								return link?.kind !== "file" || !link.resolvedPath;
-							},
-							onSelect: copyLinkText,
-						},
-						{
-							key: "sep-open-link-in",
-							type: "separator",
-							hidden: (ctx) => !copyableLinkText(ctx),
-						},
-					];
-
-					const modifiedDefaults = defaults
-						.filter((d) => d.key !== "split-with-browser")
-						.map((d) =>
+					},
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
 							d.key === "close-pane"
 								? {
 										...d,
 										label: t({
-											message: "Close Terminal",
+											message: "Close File",
 										}),
 									}
 								: d,
-						);
-
-					const killAction: ContextMenuActionConfig<PaneViewerData> = {
-						key: "kill-terminal-session",
-						label: t({
-							message: "Kill Terminal Session",
-						}),
-						icon: <LuPower />,
-						variant: "destructive",
-						disabled: isKillingTerminalSession,
-						onSelect: (ctx) => {
-							const { terminalId } = ctx.pane.data as TerminalPaneData;
-							killTerminalSession({
-								terminalId,
-								workspaceId,
-							});
-						},
-					};
-
-					return [
-						...terminalActions,
-						...linkActions,
-						...modifiedDefaults,
-						{ key: "sep-terminal-kill", type: "separator" },
-						killAction,
-					];
+						),
 				},
-			},
-			browser: {
-				getIcon: () => <Globe className="size-3.5" />,
-				getTitle: (pane) => {
-					const data = pane.data as BrowserPaneData;
-					if (data.pageTitle) return data.pageTitle;
-					if (data.url && data.url !== "about:blank") {
-						try {
-							return new URL(data.url).host;
-						} catch {}
-					}
-					return t({
-						message: "Browser",
-					});
-				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<BrowserPane
-						ctx={ctx}
-						onCreateNewAgentSession={createNewAgentSession}
-						onFocusAgentTerminal={focusAgentTerminal}
-					/>
-				),
-				renderToolbar: (ctx: RendererContext<PaneViewerData>) => (
-					<BrowserPaneToolbar ctx={ctx} />
-				),
-				// Destruction handled by useGlobalBrowserLifecycle for now.
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Browser",
-									}),
-								}
-							: d,
+				diff: {
+					keepAlive: true,
+					getIcon: () => <GitCompareArrows className="size-3.5" />,
+					getTitle: () => t({ message: "Changes" }),
+					// With the right pane area, the pane fills its own header (scope on
+					// the left, view controls on the right) through these slots.
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => (
+						<DiffPaneHeaderSlot
+							id={diffPaneTitleSlotId(ctx.pane.id)}
+							className="flex min-w-0 items-center"
+						/>
 					),
-			},
-			...(desktopUrl
-				? {
-						desktop: {
-							getIcon: () => <Monitor className="size-3.5" />,
-							getTitle: () =>
-								t({
-									message: "Desktop",
-								}),
-							renderPane: () => <DesktopPane desktopUrl={desktopUrl} />,
-						},
-					}
-				: {}),
-			files: {
-				getIcon: () => <FolderTree className="size-3.5" />,
-				getTitle: () => t({ message: "Files" }),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<FilesTreePane
-						context={ctx}
-						workspaceId={workspaceId}
-						onSearch={onSearch}
-					/>
-				),
-			},
-			"changes-list": {
-				getIcon: () => <Files className="size-3.5" />,
-				getTitle: () => t({ message: "Files changed" }),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<ChangesListPane context={ctx} workspaceId={workspaceId} />
-				),
-			},
-			review: {
-				getIcon: () => <GitPullRequestArrow className="size-3.5" />,
-				getTitle: () => t({ message: "Review" }),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<ReviewPane context={ctx} workspaceId={workspaceId} />
-				),
-			},
-			"pages-list": {
-				getIcon: () => <FileText className="size-3.5" />,
-				getTitle: () => t({ message: "Pages" }),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<PagesListPane
-						context={ctx}
-						workspaceId={workspaceId}
-						onCreateNewAgentSession={createNewAgentSession}
-						onFocusAgentTerminal={focusAgentTerminal}
-					/>
-				),
-			},
-			mobile: {
-				getIcon: () => <Smartphone className="size-3.5" />,
-				getTitle: () =>
-					t({
-						message: "Mobile",
-					}),
-				renderPane: () => <MobilePane />,
-			},
-			"chat-v3": {
-				getIcon: (ctx) => {
-					const { agent, terminalId } = ctx.pane.data as ChatPaneData;
-					return (
-						<TerminalPaneIcon
-							agentId={agent?.id}
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<DiffPane
+							context={ctx}
 							workspaceId={workspaceId}
-							terminalId={terminalId}
+							onOpenFile={onOpenFile}
+							onCreateNewAgentSession={createNewAgentSession}
 						/>
-					);
-				},
-				getTitle: () =>
-					t({
-						message: "Chat",
-					}),
-				titleSource: (pane) => {
-					const { chatTitle } = pane.data as ChatPaneData;
-					return {
-						subscribe: () => () => {},
-						getSnapshot: () => chatTitle,
-					};
-				},
-				onAfterClose: closeChatWithUndo,
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as ChatPaneData;
-					return (
-						<div className="flex items-center gap-1">
-							<AccountUsage
-								key={`${workspaceId}:${data.terminalId}`}
-								workspaceId={workspaceId}
-								terminalId={data.terminalId}
-							/>
-							<AgentSurfaceToggle
-								pane={{ kind: "chat", data }}
-								onChange={(surface, agent) =>
-									void agentSurface.switchSurface(ctx, surface, agent)
-								}
-								workspaceId={workspaceId}
-							/>
-						</div>
-					);
-				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<ChatPane
-						ctx={ctx}
-						onOpenFile={onOpenFile}
-						onRevealPath={onRevealPath}
-						workspaceId={workspaceId}
-					/>
-				),
-				contextMenuActions: (
-					_ctx: RendererContext<PaneViewerData>,
-					defaults: ContextMenuActionConfig<PaneViewerData>[],
-				) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Chat",
-									}),
-								}
-							: d,
 					),
-			},
-			comment: {
-				getIcon: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as CommentPaneData;
-					if (!data.avatarUrl) {
-						return <MessageSquare className="size-3.5" />;
-					}
-					return (
-						<img
-							src={data.avatarUrl}
-							alt=""
-							className="size-3.5 rounded-full"
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
+						<DiffPaneHeaderSlot
+							id={diffPaneActionsSlotId(ctx.pane.id)}
+							className="flex shrink-0 items-center"
 						/>
-					);
-				},
-				getTitle: (pane) => {
-					const data = pane.data as CommentPaneData;
-					return data.authorLogin;
-				},
-				renderTitle: (ctx: RendererContext<PaneViewerData>) => (
-					<CommentPaneTitle context={ctx} />
-				),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<CommentPane context={ctx} />
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
-					<CommentPaneHeaderExtras context={ctx} />
-				),
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Comment",
-									}),
-								}
-							: d,
 					),
-			},
-			"pull-request": {
-				getIcon: () => <GitPullRequest className="size-3.5" />,
-				getTitle: (pane) => {
-					const data = pane.data as PullRequestPaneData;
-					return t({ message: `Pull request #${data.number}` });
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Diff",
+										}),
+									}
+								: d,
+						),
 				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<PullRequestPane
-						data={ctx.pane.data as PullRequestPaneData}
-						onOpenDiff={onOpenDiff}
-						onOpenPage={(page) => openPagePaneInStore(ctx.store, page)}
-					/>
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
-					<PullRequestPaneHeaderExtras
-						data={ctx.pane.data as PullRequestPaneData}
-					/>
-				),
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Pull Request",
-									}),
-								}
-							: d,
-					),
-			},
-			[SUBAGENT_PANE_KIND]: {
-				getIcon: () => <LuBot className="size-3.5" />,
-				getTitle: (pane) => {
-					const { agentType } = pane.data as SubagentPaneData;
-					const label = t({ message: "Subagent" });
-					return agentType ? `${label} · ${agentType}` : label;
-				},
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<SubagentPane
-						data={ctx.pane.data as SubagentPaneData}
-						onOpenParent={() =>
-							focusOrAddTerminalPane(
-								ctx.store,
-								(ctx.pane.data as SubagentPaneData).terminalId,
+				terminal: {
+					getIcon: (ctx) => {
+						const { terminalId } = ctx.pane.data as TerminalPaneData;
+						return (
+							<TerminalPaneIcon
+								workspaceId={workspaceId}
+								terminalId={terminalId}
+							/>
+						);
+					},
+					getTitle: () =>
+						t({
+							message: "Terminal",
+						}),
+					titleSource: (pane) => {
+						const { terminalId } = pane.data as TerminalPaneData;
+						const instanceId = pane.id;
+						return {
+							subscribe: (callback) =>
+								terminalRuntimeRegistry.onTitleChange(
+									terminalId,
+									callback,
+									instanceId,
+								),
+							getSnapshot: () =>
+								terminalRuntimeRegistry
+									.getTitle(terminalId, instanceId)
+									?.trim() || undefined,
+						};
+					},
+					onBeforeClose: (pane) => {
+						const { terminalId } = pane.data as TerminalPaneData;
+						return confirmCloseTerminals(
+							[terminalId],
+							(id) => probeTerminalRunning(workspaceTrpcUtils, workspaceId, id),
+							{
+								title: t({
+									message: "A process is still running in this terminal",
+								}),
+								description: t({
+									message:
+										"Closing this terminal will end the running process.",
+								}),
+								confirmLabel: t({
+									message: "Close terminal",
+								}),
+							},
+						);
+					},
+					onAfterClose: (pane, closedPanes) => {
+						const { terminalId } = pane.data as TerminalPaneData;
+						if (
+							(pane.data as { agentSurface?: string }).agentSurface === "acp"
+						) {
+							return;
+						}
+						const firstClosed = closedPanes.find(
+							(candidate) =>
+								candidate.kind === "terminal" &&
+								(candidate.data as TerminalPaneData).terminalId === terminalId,
+						);
+						if (firstClosed?.id !== pane.id) return;
+						if (
+							[store, ...(linkedStores ?? [])].some((candidate) =>
+								findTerminalPaneLocation(candidate.getState(), terminalId),
 							)
+						) {
+							terminalRuntimeRegistry.release(terminalId, pane.id);
+							return;
 						}
-					/>
-				),
-			},
-			page: {
-				getIcon: () => <FileText className="size-3.5" />,
-				getTitle: (pane) => pagePaneLabel(pane.data as PagePaneData),
-				renderTitle: (ctx: RendererContext<PaneViewerData>) => (
-					<PagePaneTitle
-						data={ctx.pane.data as PagePaneData}
-						paneId={ctx.pane.id}
-						onClose={() => ctx.actions.close()}
-					/>
-				),
-				renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
-					<PagePaneHeaderExtras
-						onCreateNewAgentSession={createNewAgentSession}
-						data={ctx.pane.data as PagePaneData}
-						paneId={ctx.pane.id}
-						workspaceId={workspaceId}
-					/>
-				),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => (
-					<PagePane
-						store={ctx.store}
-						data={ctx.pane.data as PagePaneData}
-						paneId={ctx.pane.id}
-						onDataChange={(data) =>
-							ctx.actions.updateData(data as PaneViewerData)
+						if (consumeTerminalBackgroundIntent(terminalId)) {
+							terminalRuntimeRegistry.release(terminalId);
+							return;
 						}
-						onFocus={ctx.actions.focus}
-					/>
-				),
-				contextMenuActions: (_ctx, defaults) =>
-					defaults.map((d) =>
-						d.key === "close-pane"
-							? {
-									...d,
-									label: t({
-										message: "Close Page",
-									}),
+						clearWorkspaceRunTerminal(terminalId);
+						terminalRuntimeRegistry.dispose(terminalId);
+						killTerminalSessionSilently({ terminalId, workspaceId });
+					},
+					onAfterRemove: (pane) => {
+						terminalRuntimeRegistry.release(
+							(pane.data as TerminalPaneData).terminalId,
+							pane.id,
+						);
+					},
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => (
+						<div className="flex min-w-0 flex-1 items-center gap-1.5">
+							<TerminalSessionDropdown
+								onSessionRemoved={clearWorkspaceRunTerminal}
+								context={ctx}
+								launcher={launcher}
+								workspaceId={workspaceId}
+								onCreateNewAgentSession={createNewAgentSession}
+								onForkIntoOtherSurface={(source) =>
+									void forkIntoOtherSurface(ctx, source)
 								}
-							: d,
-					),
-			},
-			devtools: {
-				getTitle: () =>
-					t({
-						message: "DevTools",
-					}),
-				renderPane: (ctx: RendererContext<PaneViewerData>) => {
-					const data = ctx.pane.data as DevtoolsPaneData;
-					return (
-						<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-							<Trans>Inspecting {data.targetTitle}</Trans>
+							/>
+							<V2NotificationStatusIndicator
+								sources={getV2NotificationSourcesForPane(ctx.pane)}
+							/>
 						</div>
-					);
+					),
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => {
+						const data = ctx.pane.data as TerminalPaneData;
+						const { terminalId } = data;
+						return (
+							<div className="flex items-center gap-1">
+								<TerminalPaneHeaderExtras
+									workspaceId={workspaceId}
+									terminalId={terminalId}
+									terminalInstanceId={ctx.pane.id}
+									onNewShell={() => startNewShell(ctx)}
+									onOpenSubagent={onOpenSubagent}
+								/>
+							</div>
+						);
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<AgentTerminalPane
+							ctx={ctx}
+							onOpenFile={onOpenFile}
+							onRevealPath={onRevealPath}
+							onNewShell={() => startNewShell(ctx)}
+							workspaceId={workspaceId}
+						/>
+					),
+					contextMenuActions: (_ctx, defaults) => {
+						const copyText = (text: string) => {
+							navigator.clipboard
+								.writeText(text)
+								.then(() => toast.success(t({ message: "Copied" })))
+								.catch(() => {
+									toast.error(t({ message: "Copy failed" }));
+								});
+						};
+						const agentSessionIdOf = (ctx: RendererContext<PaneViewerData>) => {
+							const { terminalId } = ctx.pane.data as TerminalPaneData;
+							return queryClient
+								.getQueryData<TerminalAgentBinding[]>(
+									getTerminalAgentBindingsQueryKey(workspaceId),
+								)
+								?.find((binding) => binding.terminalId === terminalId)
+								?.agentSessionId;
+						};
+						const terminalActions: ContextMenuActionConfig<PaneViewerData>[] = [
+							{
+								key: "copy",
+								label: t({ message: "Copy" }),
+								icon: <LuClipboardCopy />,
+								shortcut: `${MOD_KEY}C`,
+								disabled: (ctx) => {
+									const { terminalId } = ctx.pane.data as TerminalPaneData;
+									return !terminalRuntimeRegistry.getSelection(
+										terminalId,
+										ctx.pane.id,
+									);
+								},
+								onSelect: (ctx) => {
+									const { terminalId } = ctx.pane.data as TerminalPaneData;
+									const text = terminalRuntimeRegistry.getSelection(
+										terminalId,
+										ctx.pane.id,
+									);
+									if (text) {
+										void writeTerminalClipboard(text).catch(
+											(error: unknown) => {
+												console.error(
+													"[terminal] Failed to copy selection",
+													error,
+												);
+											},
+										);
+									}
+								},
+							},
+							{
+								key: "paste",
+								label: t({
+									message: "Paste",
+								}),
+								icon: <LuClipboard />,
+								shortcut: `${MOD_KEY}V`,
+								onSelect: async (ctx) => {
+									const { terminalId } = ctx.pane.data as TerminalPaneData;
+									try {
+										const text = await navigator.clipboard.readText();
+										if (text) {
+											terminalRuntimeRegistry.paste(
+												terminalId,
+												text,
+												ctx.pane.id,
+											);
+										}
+									} catch {
+										// Clipboard access denied
+									}
+								},
+							},
+							{ key: "sep-terminal-clipboard", type: "separator" },
+							{
+								key: "clear-terminal",
+								label: t({
+									message: "Clear Terminal",
+								}),
+								icon: <LuEraser />,
+								shortcut:
+									clearShortcut !== "Unassigned" ? clearShortcut : undefined,
+								onSelect: (ctx) => {
+									const { terminalId } = ctx.pane.data as TerminalPaneData;
+									terminalRuntimeRegistry.clear(terminalId, ctx.pane.id);
+								},
+							},
+							{
+								key: "scroll-to-bottom",
+								label: t({
+									message: "Scroll to Bottom",
+								}),
+								icon: <LuArrowDownToLine />,
+								shortcut:
+									scrollToBottomShortcut !== "Unassigned"
+										? scrollToBottomShortcut
+										: undefined,
+								onSelect: (ctx) => {
+									const { terminalId } = ctx.pane.data as TerminalPaneData;
+									terminalRuntimeRegistry.scrollToBottom(
+										terminalId,
+										ctx.pane.id,
+									);
+								},
+							},
+							{ key: "sep-terminal-ids", type: "separator" },
+							{
+								key: "copy-terminal-id",
+								label: t({ message: "Copy terminal ID" }),
+								icon: <LuCopy />,
+								onSelect: (ctx) =>
+									copyText((ctx.pane.data as TerminalPaneData).terminalId),
+							},
+							{
+								key: "copy-agent-session-id",
+								label: t({ message: "Copy agent session ID" }),
+								icon: <LuCopy />,
+								hidden: (ctx) => !agentSessionIdOf(ctx),
+								onSelect: (ctx) => {
+									const id = agentSessionIdOf(ctx);
+									if (id) copyText(id);
+								},
+							},
+							{ key: "sep-terminal-defaults", type: "separator" },
+						];
+
+						// Only present when the right-click landed on a link. "Open in"
+						// covers what "Split with New Browser" did for a URL, so the terminal
+						// menu drops that default rather than offering both.
+						const linkAt = (ctx: RendererContext<PaneViewerData>) =>
+							terminalContextMenuLinkStore.get(ctx.pane.id)?.link ?? null;
+						// A URL, or a file/folder the host resolved. A file link that never
+						// resolved has nowhere to open and nothing to copy, so the section
+						// stays hidden rather than showing an empty submenu.
+						const copyableLinkText = (
+							ctx: RendererContext<PaneViewerData>,
+						): string | null => {
+							const link = linkAt(ctx);
+							if (!link) return null;
+							return link.kind === "url"
+								? link.url
+								: (link.resolvedPath ?? null);
+						};
+						const copyLinkText = (ctx: RendererContext<PaneViewerData>) => {
+							const text = copyableLinkText(ctx);
+							if (!text) return;
+							navigator.clipboard.writeText(text).catch(() => {
+								toast.error(t({ message: "Copy failed" }));
+							});
+						};
+						const linkActions: ContextMenuActionConfig<PaneViewerData>[] = [
+							{
+								key: "open-link-in",
+								label: t({ message: "Open in" }),
+								icon: <LuExternalLink />,
+								hidden: (ctx) => !copyableLinkText(ctx),
+								children: openInActions,
+							},
+							{
+								key: "copy-link",
+								label: t({ message: "Copy Link" }),
+								icon: <LuLink />,
+								hidden: (ctx) => linkAt(ctx)?.kind !== "url",
+								onSelect: copyLinkText,
+							},
+							{
+								key: "copy-path",
+								label: t({ message: "Copy Path" }),
+								icon: <LuLink />,
+								hidden: (ctx) => {
+									const link = linkAt(ctx);
+									return link?.kind !== "file" || !link.resolvedPath;
+								},
+								onSelect: copyLinkText,
+							},
+							{
+								key: "sep-open-link-in",
+								type: "separator",
+								hidden: (ctx) => !copyableLinkText(ctx),
+							},
+						];
+
+						const modifiedDefaults = defaults
+							.filter((d) => d.key !== "split-with-browser")
+							.map((d) =>
+								d.key === "close-pane"
+									? {
+											...d,
+											label: t({
+												message: "Close Terminal",
+											}),
+										}
+									: d,
+							);
+
+						const killAction: ContextMenuActionConfig<PaneViewerData> = {
+							key: "kill-terminal-session",
+							label: t({
+								message: "Kill Terminal Session",
+							}),
+							icon: <LuPower />,
+							variant: "destructive",
+							disabled: isKillingTerminalSession,
+							onSelect: (ctx) => {
+								const { terminalId } = ctx.pane.data as TerminalPaneData;
+								killTerminalSession({
+									terminalId,
+									workspaceId,
+								});
+							},
+						};
+
+						return [
+							...terminalActions,
+							...linkActions,
+							...modifiedDefaults,
+							{ key: "sep-terminal-kill", type: "separator" },
+							killAction,
+						];
+					},
 				},
-			},
-		}),
+				browser: {
+					getIcon: () => <Globe className="size-3.5" />,
+					getTitle: (pane) => {
+						const data = pane.data as BrowserPaneData;
+						if (data.pageTitle) return data.pageTitle;
+						if (data.url && data.url !== "about:blank") {
+							try {
+								return new URL(data.url).host;
+							} catch {}
+						}
+						return t({
+							message: "Browser",
+						});
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<BrowserPane
+							ctx={ctx}
+							onCreateNewAgentSession={createNewAgentSession}
+							onFocusAgentTerminal={focusAgentTerminal}
+						/>
+					),
+					renderToolbar: (ctx: RendererContext<PaneViewerData>) => (
+						<BrowserPaneToolbar ctx={ctx} />
+					),
+					// Destruction handled by useGlobalBrowserLifecycle for now.
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Browser",
+										}),
+									}
+								: d,
+						),
+				},
+				...(desktopUrl
+					? {
+							desktop: {
+								getIcon: () => <Monitor className="size-3.5" />,
+								getTitle: () =>
+									t({
+										message: "Desktop",
+									}),
+								renderPane: () => <DesktopPane desktopUrl={desktopUrl} />,
+							},
+						}
+					: {}),
+				files: {
+					getIcon: () => <FolderTree className="size-3.5" />,
+					getTitle: () => t({ message: "Files" }),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<FilesTreePane
+							context={ctx}
+							workspaceId={workspaceId}
+							onSearch={onSearch}
+						/>
+					),
+				},
+				"changes-list": {
+					getIcon: () => <Files className="size-3.5" />,
+					getTitle: () => t({ message: "Files changed" }),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<ChangesListPane context={ctx} workspaceId={workspaceId} />
+					),
+				},
+				review: {
+					getIcon: () => <GitPullRequestArrow className="size-3.5" />,
+					getTitle: () => t({ message: "Review" }),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<ReviewPane context={ctx} workspaceId={workspaceId} />
+					),
+				},
+				"pages-list": {
+					getIcon: () => <FileText className="size-3.5" />,
+					getTitle: (pane) => {
+						const { page } = pane.data as PagesListPaneData;
+						return page ? pagePaneLabel(page) : t({ message: "Pages" });
+					},
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => {
+						const { page } = ctx.pane.data as PagesListPaneData;
+						if (!page) return undefined;
+						return (
+							<PagesListPaneTitle
+								page={page}
+								pageUiId={pagesListPageUiId(ctx.pane.id, page)}
+								onBack={() => ctx.actions.updateData({ kind: "pages-list" })}
+							/>
+						);
+					},
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => {
+						const { page } = ctx.pane.data as PagesListPaneData;
+						if (!page) return undefined;
+						return (
+							<PagePaneHeaderExtras
+								onCreateNewAgentSession={createNewAgentSession}
+								data={page}
+								paneId={pagesListPageUiId(ctx.pane.id, page)}
+								workspaceId={workspaceId}
+							/>
+						);
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<PagesListPane
+							context={ctx}
+							workspaceId={workspaceId}
+							onCreateNewAgentSession={createNewAgentSession}
+							onFocusAgentTerminal={focusAgentTerminal}
+						/>
+					),
+				},
+				[NEW_TAB_PANE_KIND]: {
+					getIcon: () => <Plus className="size-3.5" />,
+					getTitle: () => t({ message: "New Tab" }),
+					hideHeader: (ctx) => ctx.pane.parentDirection === null,
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<RightPaneNewTab
+							onOpen={(pane) =>
+								replaceNewTabPane(
+									ctx.store,
+									{ tabId: ctx.tab.id, paneId: ctx.pane.id },
+									pane,
+								)
+							}
+						/>
+					),
+				},
+				mobile: {
+					getIcon: () => <Smartphone className="size-3.5" />,
+					getTitle: () =>
+						t({
+							message: "Mobile",
+						}),
+					renderPane: () => <MobilePane workspaceId={workspaceId} />,
+				},
+				[PENDING_CLOUD_CHAT_PANE_KIND]: {
+					getIcon: (ctx) => {
+						const data = ctx.pane.data as PendingCloudChatPaneData;
+						return chatPaneIcon({
+							terminalId: data.draftId,
+							sessionId: null,
+							agent: { id: data.agentId },
+						});
+					},
+					getTitle: () => t({ message: "Chat" }),
+					onAfterClose: (pane) => {
+						const { terminalId } = pane.data as PendingCloudChatPaneData;
+						if (terminalId) ignoreChatTerminal(terminalId);
+					},
+					insetsAside: true,
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<PendingCloudChatPane ctx={ctx} workspaceId={workspaceId} />
+					),
+				},
+				"chat-v3": {
+					getIcon: (ctx) => chatPaneIcon(ctx.pane.data as ChatPaneData),
+					getTitle: () =>
+						t({
+							message: "Chat",
+						}),
+					titleSource: (pane) => {
+						const { chatTitle } = pane.data as ChatPaneData;
+						return {
+							subscribe: () => () => {},
+							getSnapshot: () => chatTitle,
+						};
+					},
+					onAfterClose: closeChatWithUndo,
+					insetsAside: true,
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => (
+						<ChatPaneTitle
+							context={ctx}
+							workspaceId={workspaceId}
+							linkedStores={linkedStores}
+							icon={chatPaneIcon(ctx.pane.data as ChatPaneData)}
+							onForkIntoOtherSurface={(source) =>
+								void forkIntoOtherSurface(ctx, source)
+							}
+						/>
+					),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<ChatPane
+							ctx={ctx}
+							onOpenDiff={onOpenDiff}
+							onOpenFile={onOpenFile}
+							onRevealPath={onRevealPath}
+							workspaceId={workspaceId}
+						/>
+					),
+					contextMenuActions: (
+						_ctx: RendererContext<PaneViewerData>,
+						defaults: ContextMenuActionConfig<PaneViewerData>[],
+					) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Chat",
+										}),
+									}
+								: d,
+						),
+				},
+				comment: {
+					getIcon: (ctx: RendererContext<PaneViewerData>) => {
+						const data = ctx.pane.data as CommentPaneData;
+						if (!data.avatarUrl) {
+							return <MessageSquare className="size-3.5" />;
+						}
+						return (
+							<img
+								src={data.avatarUrl}
+								alt=""
+								className="size-3.5 rounded-full"
+							/>
+						);
+					},
+					getTitle: (pane) => {
+						const data = pane.data as CommentPaneData;
+						return data.authorLogin;
+					},
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => (
+						<CommentPaneTitle context={ctx} />
+					),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<CommentPane context={ctx} />
+					),
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
+						<CommentPaneHeaderExtras context={ctx} />
+					),
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Comment",
+										}),
+									}
+								: d,
+						),
+				},
+				"pull-request": {
+					keepAlive: true,
+					getIcon: () => <GitPullRequest className="size-3.5" />,
+					getTitle: (pane) => {
+						const data = pane.data as PullRequestPaneData;
+						return t({ message: `Pull request #${data.number}` });
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<PullRequestPane
+							data={ctx.pane.data as PullRequestPaneData}
+							onOpenDiff={onOpenDiff}
+							onOpenPage={(page) => openPagePaneInStore(ctx.store, page)}
+							onOpenPullRequest={(ref) =>
+								openPullRequestPaneInStore(ctx.store, ref)
+							}
+						/>
+					),
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
+						<PullRequestPaneHeaderExtras
+							data={ctx.pane.data as PullRequestPaneData}
+						/>
+					),
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Pull Request",
+										}),
+									}
+								: d,
+						),
+				},
+				[SUBAGENT_PANE_KIND]: {
+					getIcon: () => <LuBot className="size-3.5" />,
+					getTitle: (pane) => {
+						const { agentType } = pane.data as SubagentPaneData;
+						const label = t({ message: "Subagent" });
+						return agentType ? `${label} · ${agentType}` : label;
+					},
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<SubagentPane
+							data={ctx.pane.data as SubagentPaneData}
+							onOpenParent={() => {
+								const { terminalId } = ctx.pane.data as SubagentPaneData;
+								const focused = [store, ...(linkedStores ?? [])].some((s) =>
+									focusTerminalPane(s, terminalId),
+								);
+								if (!focused) focusOrAddTerminalPane(store, terminalId);
+							}}
+						/>
+					),
+				},
+				page: {
+					getIcon: () => <FileText className="size-3.5" />,
+					getTitle: (pane) => pagePaneLabel(pane.data as PagePaneData),
+					renderTitle: (ctx: RendererContext<PaneViewerData>) => (
+						<PagePaneTitle
+							data={ctx.pane.data as PagePaneData}
+							paneId={ctx.pane.id}
+							onClose={() => ctx.actions.close()}
+						/>
+					),
+					renderHeaderExtras: (ctx: RendererContext<PaneViewerData>) => (
+						<PagePaneHeaderExtras
+							onCreateNewAgentSession={createNewAgentSession}
+							data={ctx.pane.data as PagePaneData}
+							paneId={ctx.pane.id}
+							workspaceId={workspaceId}
+						/>
+					),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => (
+						<PagePane
+							store={ctx.store}
+							data={ctx.pane.data as PagePaneData}
+							paneId={ctx.pane.id}
+							onDataChange={(data) =>
+								ctx.actions.updateData(data as PaneViewerData)
+							}
+							onFocus={ctx.actions.focus}
+							isActive={ctx.isActive}
+						/>
+					),
+					contextMenuActions: (_ctx, defaults) =>
+						defaults.map((d) =>
+							d.key === "close-pane"
+								? {
+										...d,
+										label: t({
+											message: "Close Page",
+										}),
+									}
+								: d,
+						),
+				},
+				devtools: {
+					getTitle: () =>
+						t({
+							message: "DevTools",
+						}),
+					renderPane: (ctx: RendererContext<PaneViewerData>) => {
+						const data = ctx.pane.data as DevtoolsPaneData;
+						return (
+							<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+								<Trans>Inspecting {data.targetTitle}</Trans>
+							</div>
+						);
+					},
+				},
+			}),
 		[
 			store,
 			linkedStores,
 			workspaceId,
-			agentSurface,
+			startNewShell,
+			forkIntoOtherSurface,
 			closeChatWithUndo,
 			clearWorkspaceRunTerminal,
 			clearShortcut,
@@ -1016,8 +1197,12 @@ export function usePaneRegistry({
 			createNewAgentSession,
 			focusAgentTerminal,
 			workspaceTrpcUtils,
+			queryClient,
 			t,
 			desktopUrl,
+			chatPaneIcon,
+			onOpenSubagent,
+			rightStore,
 		],
 	);
 }

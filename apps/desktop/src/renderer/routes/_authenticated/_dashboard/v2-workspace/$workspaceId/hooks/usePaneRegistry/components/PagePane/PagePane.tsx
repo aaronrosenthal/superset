@@ -18,6 +18,7 @@ interface PagePaneProps {
 	 * handler, so the frame reports it and the pane activates itself.
 	 */
 	onFocus: () => void;
+	isActive: boolean;
 }
 
 export function PagePane({
@@ -26,6 +27,7 @@ export function PagePane({
 	paneId,
 	onDataChange,
 	onFocus,
+	isActive,
 }: PagePaneProps) {
 	const getUrlAction = useUrlLinkAction("4-tier");
 	const rightPane = useRightPaneLinkTarget();
@@ -45,7 +47,12 @@ export function PagePane({
 		(page: { id: string; slug: string; title: string | null }) => {
 			const current = dataRef.current;
 			const title = page.title ?? undefined;
-			if (current.pageId === page.id && current.title === title) return;
+			if (
+				current.pageId === page.id &&
+				current.slug === page.slug &&
+				current.title === title
+			)
+				return;
 			onDataChangeRef.current({ slug: page.slug, pageId: page.id, title });
 		},
 		[],
@@ -61,6 +68,7 @@ export function PagePane({
 			onCommentsEnabledChange={setCommentsEnabled}
 			onResolved={handleResolved}
 			onFramePointerDown={onFocus}
+			findActive={isActive}
 			onLinkClick={(click) => {
 				const action = /^(mailto:|tel:)/i.test(click.url)
 					? "external"

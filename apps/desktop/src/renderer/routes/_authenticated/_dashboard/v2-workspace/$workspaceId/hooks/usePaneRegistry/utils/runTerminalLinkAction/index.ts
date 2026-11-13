@@ -1,7 +1,8 @@
 export {
+	runChatPullRequestLink,
 	runFileLinkAction,
 	runFolderLinkAction,
 	runUrlLinkAction,
 	type TerminalLinkActionDeps,
-	terminalPullRequestLinkAction,
+	terminalUrlLinkAction,
 } from "./runTerminalLinkAction";

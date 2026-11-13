@@ -1,11 +1,17 @@
 import type { WorkspaceStore } from "@superset/panes";
 import { env } from "renderer/env.renderer";
-import type {
-	FolderLinkAction,
-	LinkAction,
-	ModifierEvent,
+import {
+	type FolderLinkAction,
+	type LinkAction,
+	type ModifierEvent,
+	PULL_REQUEST_LINKS,
+	tierFor,
 } from "renderer/lib/clickPolicy";
-import { pullRequestRefFromBareUrl } from "renderer/lib/github/pullRequestRef";
+import {
+	type PullRequestRef,
+	pullRequestRefFromBareUrl,
+	pullRequestRefFromUrl,
+} from "renderer/lib/github/pullRequestRef";
 import { parseSupersetPageUrl } from "renderer/lib/parseSupersetPageUrl";
 import { electronTrpcClient } from "renderer/lib/trpc-client";
 import type { RightPaneLinkTarget } from "renderer/routes/_authenticated/_dashboard/v2-workspace/$workspaceId/providers/RightPaneLinkTargetProvider";
@@ -38,13 +44,66 @@ export interface TerminalLinkActionDeps {
 	rightPane?: RightPaneLinkTarget | null;
 }
 
-export function terminalPullRequestLinkAction(
+/**
+ * A bare pull request URL keeps its shortcuts (shift-click → system browser,
+ * unbound plain click → PR pane); a plain click the user bound in URL links
+ * follows that binding, as it does for every other URL.
+ */
+export function terminalUrlLinkAction(
 	event: ModifierEvent,
 	url: string,
+	getUrlAction: (event: ModifierEvent, url: string) => LinkAction | null,
 ): LinkAction | null {
-	if (event.metaKey || event.ctrlKey) return null;
-	if (!pullRequestRefFromBareUrl(url)) return null;
-	return event.shiftKey ? "external" : "pane";
+	const isBarePullRequest =
+		!event.metaKey && !event.ctrlKey && pullRequestRefFromBareUrl(url) !== null;
+	if (isBarePullRequest && event.shiftKey) return "external";
+	const chosen = getUrlAction(event, url);
+	if (chosen !== null) return chosen;
+	return isBarePullRequest ? "pane" : null;
+}
+
+/**
+ * Chat shows every pull request URL as a badge, so the badge opens the pane
+ * even when the URL names a file or a comment; a modifier click reaches
+ * GitHub, where that anchor still works. Terminals keep those deep links in
+ * a browser pane: there the URL is all the reader sees.
+ */
+export function runChatPullRequestLink(
+	deps: Pick<TerminalLinkActionDeps, "store" | "rightPane">,
+	url: string,
+	event: ModifierEvent,
+	chosen?: LinkAction,
+): boolean {
+	const pullRequest = pullRequestRefFromUrl(url);
+	if (!pullRequest) return false;
+	const action =
+		chosen ?? PULL_REQUEST_LINKS[tierFor(event, "2-tier")] ?? "pane";
+	if (action === "external") openUrlExternally(url);
+	else openPullRequestPane(deps, pullRequest, action);
+	return true;
+}
+
+function openUrlExternally(url: string): void {
+	electronTrpcClient.external.openUrl.mutate(url).catch((error) => {
+		console.error("[v2 Terminal] Failed to open URL:", url, error);
+	});
+}
+
+function openPullRequestPane(
+	deps: Pick<TerminalLinkActionDeps, "store" | "rightPane">,
+	pullRequest: PullRequestRef,
+	action: Exclude<LinkAction, "external">,
+): void {
+	if (deps.rightPane) {
+		deps.rightPane.reveal();
+		openPullRequestPaneInStore(deps.rightPane.store, pullRequest);
+		return;
+	}
+	openPullRequestPaneInStore(
+		deps.store,
+		pullRequest,
+		action === "newTab" ? "tab" : "split",
+	);
 }
 
 export function runUrlLinkAction(
@@ -53,21 +112,19 @@ export function runUrlLinkAction(
 	action: LinkAction,
 ): void {
 	if (action === "external") {
-		electronTrpcClient.external.openUrl.mutate(url).catch((error) => {
-			console.error("[v2 Terminal] Failed to open URL:", url, error);
-		});
+		openUrlExternally(url);
+		return;
+	}
+	const pullRequest = pullRequestRefFromBareUrl(url);
+	if (pullRequest) {
+		openPullRequestPane(deps, pullRequest, action);
 		return;
 	}
 	const pageSlug = parseSupersetPageUrl(url, env.NEXT_PUBLIC_WEB_URL);
-	const pullRequest = pullRequestRefFromBareUrl(url);
-	if (action === "rightPane" && deps.rightPane) {
+	if (deps.rightPane) {
 		deps.rightPane.reveal();
 		if (pageSlug) {
 			openPagePaneInStore(deps.rightPane.store, { slug: pageSlug }, "tab");
-			return;
-		}
-		if (pullRequest) {
-			openPullRequestPaneInStore(deps.rightPane.store, pullRequest);
 			return;
 		}
 		openUrlInRightPane(deps.rightPane.store, url);
@@ -77,14 +134,6 @@ export function runUrlLinkAction(
 		openPagePaneInStore(
 			deps.store,
 			{ slug: pageSlug },
-			action === "newTab" ? "tab" : "split",
-		);
-		return;
-	}
-	if (pullRequest) {
-		openPullRequestPaneInStore(
-			deps.store,
-			pullRequest,
 			action === "newTab" ? "tab" : "split",
 		);
 		return;

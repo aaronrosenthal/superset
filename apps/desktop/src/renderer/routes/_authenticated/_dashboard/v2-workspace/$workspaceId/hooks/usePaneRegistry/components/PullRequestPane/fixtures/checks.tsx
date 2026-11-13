@@ -26,16 +26,49 @@ mock.module(`${pane}/hooks/usePullRequestPaneDetail`, () => ({
 }));
 mock.module("@superset/workspace-client", () => ({
 	workspaceTrpc: {
-		git: {
-			getPullRequest: { useQuery: () => ({ data: null }) },
-			getPullRequestThreads: { useQuery: () => ({ data: null }) },
-		},
+		git: { getPullRequest: { useQuery: () => ({ data: null }) } },
 	},
+}));
+mock.module(`${root}/pull-requests/hooks/usePullRequestThreads`, () => ({
+	usePullRequestThreads: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false,
+	}),
+}));
+mock.module("renderer/hooks/useActiveOrganizationId", () => ({
+	useActiveOrganizationId: () => "org",
+}));
+mock.module("renderer/lib/host-service-client", () => ({
+	getHostServiceClientByUrl: () => ({}),
 }));
 mock.module(
 	`${root}/v2-workspace/$workspaceId/hooks/useReviewCommentNavigation`,
 	() => ({ useReviewCommentNavigation: () => mock() }),
 );
+mock.module(`${root}/pull-requests/hooks/usePullRequestMergeFlow`, () => ({
+	usePullRequestMergeFlow: () => ({
+		stack: null,
+		stackQuery: {
+			stack: null,
+			isLoading: false,
+			isIncomplete: false,
+			refetch: mock(),
+		},
+	}),
+}));
+mock.module(`${root}/pull-requests/hooks/useStackRestack`, () => ({
+	useStackRestack: () => null,
+}));
+mock.module(
+	`${root}/v2-workspace/$workspaceId/hooks/useOpenStackLayer`,
+	() => ({
+		useOpenStackLayer: () => mock(),
+	}),
+);
+mock.module(`${root}/pull-requests/hooks/useRefreshPullRequest`, () => ({
+	useRefreshPullRequest: () => ({ refresh: () => {}, isRefreshing: false }),
+}));
 mock.module(`${root}/pull-requests/components/PullRequestActions`, () => ({
 	PullRequestActions: () => null,
 }));
@@ -113,6 +146,7 @@ for (const state of ["loading", "error"] as const) {
 				data={{ repoFullName: "owner/repo", number: 12 }}
 				onOpenDiff={mock()}
 				onOpenPage={mock()}
+				onOpenPullRequest={mock()}
 			/>,
 		);
 		expect(view.queryByTestId("code")).toBeNull();
@@ -141,6 +175,7 @@ test("matching projects retain project actions even while Summary loads", async 
 			data={{ repoFullName: "owner/repo", number: 12 }}
 			onOpenDiff={mock()}
 			onOpenPage={mock()}
+			onOpenPullRequest={mock()}
 		/>,
 	);
 	fireEvent.click(view.getByRole("button", { name: "Changes" }));
