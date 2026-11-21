@@ -23,7 +23,14 @@ export {
 	folderIntentLabel,
 } from "./policies/folderPolicy";
 export type { ClickPolicy } from "./policies/policy";
-export { useChangesSidebarFilePolicy } from "./policies/useChangesSidebarFilePolicy";
+export {
+	PULL_REQUEST_LINKS,
+	usePullRequestLinkPolicy,
+} from "./policies/pullRequestLinkPolicy";
+export {
+	type ChangesSidebarFilePolicy,
+	useChangesSidebarFilePolicy,
+} from "./policies/useChangesSidebarFilePolicy";
 export { useInlineFilePolicy } from "./policies/useInlineFilePolicy";
 export { usePagePolicy } from "./policies/usePagePolicy";
 export { useSidebarFilePolicy } from "./policies/useSidebarFilePolicy";

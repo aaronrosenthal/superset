@@ -14,7 +14,8 @@ import {
 	sharingResourceSchema,
 	validateGrantees,
 } from "../../lib/sharing";
-import { jwtProcedure, userError } from "../../trpc";
+import { pushWorkspaceAccess } from "../../lib/workspace-access";
+import { personProcedure, userError } from "../../trpc";
 import { loadVisibleWorkspace } from "./access";
 import { recordCloudWorkspaceActivity } from "./activity";
 
@@ -22,7 +23,7 @@ type SharingContext = Parameters<typeof loadVisibleWorkspace>[0];
 
 async function loadOwnedWorkspace(ctx: SharingContext, id: string) {
 	const row = await loadVisibleWorkspace(ctx, id);
-	if (row.createdByUserId !== ctx.userId) {
+	if (row.createdByUserId !== ctx.principal.userId) {
 		throw userError({
 			code: "FORBIDDEN",
 			message: "Only the owner can change who this is shared with",
@@ -49,7 +50,7 @@ async function recordShareActivity(
 }
 
 export const cloudWorkspaceSharingRouter = {
-	get: jwtProcedure
+	get: personProcedure
 		.input(sharingResourceSchema)
 		.query(async ({ ctx, input }) => {
 			const row = await loadVisibleWorkspace(ctx, input.id);
@@ -68,31 +69,39 @@ export const cloudWorkspaceSharingRouter = {
 			return {
 				owner: owner ?? null,
 				grantees: await listGrantees({ kind: "cloudWorkspace", id: row.id }),
-				canManage: row.createdByUserId === ctx.userId,
+				canManage: row.createdByUserId === ctx.principal.userId,
 				visibility: row.visibility,
 			};
 		}),
 
-	add: jwtProcedure.input(addSharesSchema).mutation(async ({ ctx, input }) => {
-		const row = await loadOwnedWorkspace(ctx, input.id);
-		const grantees = await validateGrantees({
-			organizationId: row.organizationId,
-			ownerId: row.createdByUserId,
-			grantees: input.grantees,
-		});
-		const added = await addShares({
-			target: { kind: "cloudWorkspace", id: row.id },
-			grantees,
-			sharedByUserId: ctx.userId,
-		});
-		if (added.length) {
-			await recordShareActivity(row.id, ctx.userId, "shared", added);
-			nudge(row.organizationId, "cloud_workspaces");
-		}
-		return { added };
-	}),
+	add: personProcedure
+		.input(addSharesSchema)
+		.mutation(async ({ ctx, input }) => {
+			const row = await loadOwnedWorkspace(ctx, input.id);
+			const grantees = await validateGrantees({
+				organizationId: row.organizationId,
+				ownerId: row.createdByUserId,
+				grantees: input.grantees,
+			});
+			const added = await addShares({
+				target: { kind: "cloudWorkspace", id: row.id },
+				grantees,
+				sharedByUserId: ctx.principal.userId,
+			});
+			if (added.length) {
+				await recordShareActivity(
+					row.id,
+					ctx.principal.userId,
+					"shared",
+					added,
+				);
+				pushWorkspaceAccess(row.organizationId, row.id);
+				nudge(row.organizationId, "cloud_workspaces");
+			}
+			return { added };
+		}),
 
-	remove: jwtProcedure
+	remove: personProcedure
 		.input(removeShareSchema)
 		.mutation(async ({ ctx, input }) => {
 			const row = await loadOwnedWorkspace(ctx, input.id);
@@ -101,9 +110,10 @@ export const cloudWorkspaceSharingRouter = {
 				input.grantee,
 			);
 			if (removed) {
-				await recordShareActivity(row.id, ctx.userId, "unshared", [
+				await recordShareActivity(row.id, ctx.principal.userId, "unshared", [
 					input.grantee,
 				]);
+				pushWorkspaceAccess(row.organizationId, row.id);
 				nudge(row.organizationId, "cloud_workspaces");
 			}
 			return { removed };
